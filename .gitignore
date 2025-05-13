@@ -1,0 +1,5 @@
+*.csv
+*.yaml
+*.pyc
+lightning_logs/*
+checkpoints/*
