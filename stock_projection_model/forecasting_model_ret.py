@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from pytorch_forecasting import NHiTS, TimeSeriesDataSet, SMAPE, Baseline
+from pytorch_forecasting import NHiTS, TimeSeriesDataSet, SMAPE, Baseline, QuantileLoss, MAPE
 import os
 from torch.utils.data import DataLoader
 import torch
@@ -61,46 +61,49 @@ def set_up_dataset(feature_path:str, split_file: str):
     train_datset = TimeSeriesDataSet(
         all_training_data,
         group_ids=["ticker"],
-        target="adjprc",
+        target="returns",
         time_idx="time_idx",
-        max_encoder_length=150,
-        min_prediction_length=30,
-        max_prediction_length=30,
-        time_varying_known_reals=["time_idx", "adjprc_day"],
-        time_varying_unknown_reals=["adjprc","adjprc_rolling_mean3","adjprc_rolling_mean5",
-                                    "adjprc_rolling_mean10","adjprc_rolling_mean20","adjprc_rolling_stdev3",
-                                    "adjprc_rolling_stdev5","adjprc_rolling_stdev10","adjprc_rolling_stdev20"],
-        target_normalizer=GroupNormalizer(groups=["ticker"])
+        max_encoder_length=300,
+        min_prediction_length=50,
+        max_prediction_length=50,
+        time_varying_known_reals=["time_idx", "returns_day"],
+        time_varying_unknown_reals=["returns","returns_rolling_mean5",
+                                    "returns_rolling_mean10","returns_rolling_mean20",
+                                    "returns_rolling_stdev5","returns_rolling_stdev10","returns_rolling_stdev20"],
+                                   # "log_returns", "ROC_5", "ema_10", "ema_20"],
+        target_normalizer=GroupNormalizer(groups=["ticker"], method="robust")
     )
 
     val_datset = TimeSeriesDataSet(
         all_val_data,
         group_ids=["ticker"],
-        target="adjprc",
+        target="returns",
         time_idx="time_idx",
-        max_encoder_length=150,
-        min_prediction_length=30,
-        max_prediction_length=30,
-        time_varying_known_reals=["time_idx", "adjprc_day"],
-        time_varying_unknown_reals=["adjprc","adjprc_rolling_mean3","adjprc_rolling_mean5",
-                                    "adjprc_rolling_mean10","adjprc_rolling_mean20","adjprc_rolling_stdev3",
-                                    "adjprc_rolling_stdev5","adjprc_rolling_stdev10","adjprc_rolling_stdev20"],
-        target_normalizer=GroupNormalizer(groups=["ticker"])
+        max_encoder_length=300,
+        min_prediction_length=50,
+        max_prediction_length=50,
+        time_varying_known_reals=["time_idx", "returns_day"],
+        time_varying_unknown_reals=["returns","returns_rolling_mean5",
+                                    "returns_rolling_mean10","returns_rolling_mean20",
+                                    "returns_rolling_stdev5","returns_rolling_stdev10","returns_rolling_stdev20"],
+                                    #"log_returns", "ROC_5", "ema_10", "ema_20"],
+        target_normalizer=GroupNormalizer(groups=["ticker"], method="robust")
     )
 
     test_datset = TimeSeriesDataSet(
         all_testing_data,
         group_ids=["ticker"],
-        target="adjprc",
+        target="returns",
         time_idx="time_idx",
-        max_encoder_length=150,
-        min_prediction_length=30,
-        max_prediction_length=30,
-        time_varying_known_reals=["time_idx", "adjprc_day"],
-        time_varying_unknown_reals=["adjprc","adjprc_rolling_mean3","adjprc_rolling_mean5",
-                                    "adjprc_rolling_mean10","adjprc_rolling_mean20","adjprc_rolling_stdev3",
-                                    "adjprc_rolling_stdev5","adjprc_rolling_stdev10","adjprc_rolling_stdev20"],
-        target_normalizer=GroupNormalizer(groups=["ticker"])
+        max_encoder_length=300,
+        min_prediction_length=50,
+        max_prediction_length=50,
+        time_varying_known_reals=["time_idx", "returns_day"],
+        time_varying_unknown_reals=["returns","returns_rolling_mean5",
+                                    "returns_rolling_mean10","returns_rolling_mean20",
+                                    "returns_rolling_stdev5","returns_rolling_stdev10","returns_rolling_stdev20"],
+                                    #"log_returns", "ROC_5", "ema_10", "ema_20"],
+        target_normalizer=GroupNormalizer(groups=["ticker"], method="robust")
     )
 
     return train_datset, val_datset, test_datset
@@ -111,9 +114,9 @@ Initialize and train the model given the training sets and loaders
 def train(train_dataset: TimeSeriesDataSet, train_dataloader:DataLoader, val_dataloader:DataLoader):
 
     # Initialize the NHiTS Model
-    model = NHiTS.from_dataset(train_dataset, learning_rate = 1e-04, weight_decay=1e-4,
+    model = NHiTS.from_dataset(train_dataset, learning_rate = 1e-03, weight_decay=1e-4,
                                hidden_size=64, log_val_interval=1, batch_normalization=True,
-                               loss=nn.SmoothL1Loss())
+                               loss=QuantileLoss(quantiles=[0.001, 0.01, 0.05, 0.5, 0.95, 0.99, 0.999]))
 
     # Initialize the checkpoint callback (to save on best validation)
     checkpoint_callback = ModelCheckpoint(
@@ -143,13 +146,13 @@ def train(train_dataset: TimeSeriesDataSet, train_dataloader:DataLoader, val_dat
     # Load and save the best model path
     best_model_path = trainer.checkpoint_callback.best_model_path
     best_model = NHiTS.load_from_checkpoint(best_model_path)
-    torch.save(best_model.state_dict(), "./NHITS_forecasting_model.pt")
+    torch.save(best_model.state_dict(), "./NHITS_forecasting_model_ret.pt")
 
 
 '''
 Test the model by predicting on the last possible window for the given test set.
 '''
-def test(model: NHiTS, test_dataloader:DataLoader, test_dataset: TimeSeriesDataSet, mode: str = "test"):
+def test_last_window(model: NHiTS, test_dataloader:DataLoader, test_dataset: TimeSeriesDataSet, mode: str = "test"):
     # Make the predictions
     predictions = model.predict(test_dataloader, return_x=True, mode="prediction", trainer_kwargs=dict(accelerator="cpu"))
 
@@ -177,7 +180,7 @@ def test(model: NHiTS, test_dataloader:DataLoader, test_dataset: TimeSeriesDataS
         stock_projection[tick] = {"time" : time_idx, "true": t_proj, "pred": p_proj}
 
     # Plot for each stock
-    pdf_path = f"{mode}_latest_stock_predictions.pdf"
+    pdf_path = f"{mode}_latest_stock_predictions_ret.pdf"
     with PdfPages(pdf_path) as pdf:
         for stock, data in stock_projection.items():
             fig = plt.figure(figsize=(8, 6))
@@ -186,11 +189,59 @@ def test(model: NHiTS, test_dataloader:DataLoader, test_dataset: TimeSeriesDataS
             plt.title(f"Predicted vs Actual for stock {stock} (last window)")
             plt.legend()
             plt.xlabel("Day")
-            plt.ylabel("adjprc")
+            plt.ylabel("returns (multiplied by 100)")
             pdf.savefig(fig, bbox_inches='tight')
             plt.close()
 
+def test(model: NHiTS, test_dataloader:DataLoader, test_dataset: TimeSeriesDataSet, mode: str = "test"):
+    # Make the predictions
+    predictions = model.predict(test_dataloader, return_x=True, mode="prediction", trainer_kwargs=dict(accelerator="cpu"))
 
+    # Get all our test tickers
+    tickers = test_dataset.decoded_index["ticker"].unique()
+
+    time_idx = predictions.x["decoder_time_idx"]
+    actuals = predictions.x["decoder_target"]
+    preds = predictions.output
+
+    # by def, each time_idx must start at 300 since it is the max encoder length
+    starts = torch.argwhere(time_idx[:, 0] == 300)
+
+    ends = torch.cat([(starts)[1:, :], torch.tensor([len(time_idx)]).unsqueeze(-1)], dim=0)
+
+    starts_and_ends = torch.cat([starts, ends], dim=1)
+
+
+    pdf_path = f"{mode}_full_prediction_ret.pdf"
+    with PdfPages(pdf_path) as pdf:
+        ticker_index = 0
+        for start, end in starts_and_ends:
+            corresponding_time = time_idx[start:end].flatten().numpy()
+            corresponding_actuals = actuals[start:end].flatten().numpy()
+            corresponding_pred = preds[start:end].flatten().numpy()
+
+            df = pd.DataFrame({
+                "time": corresponding_time,
+                "Actual": corresponding_actuals,
+                "Prediction": corresponding_pred
+            })
+
+            df = df.groupby("time").agg({
+                "Prediction" : 'mean',
+                'Actual': 'mean'
+            })
+
+            fig = plt.figure(figsize=(14, 6))
+            plt.plot(df.index, df["Actual"], label="Actual", color="blue")
+            plt.plot(df.index, df["Prediction"], label="Predicted", color="orange")
+            plt.title(f"Predicted vs Actual for stock {tickers[ticker_index]} (all)")
+            plt.legend()
+            plt.xlabel("Day")
+            plt.ylabel("returns")
+            pdf.savefig(fig, bbox_inches='tight')
+            plt.close()
+
+            ticker_index += 1
     
 
 if __name__ == '__main__':
@@ -198,23 +249,25 @@ if __name__ == '__main__':
     print(f"Started job at {t1}")
 
     # Set up the datasets
-    train_dataset, val_dataset, test_dataset = set_up_dataset("SP500_Features_sampled", "training_split.npy")
+    train_dataset, val_dataset, test_dataset = set_up_dataset("SP500_Features_sampled_ret", "training_split.npy")
 
     # Set up the dataloaders
-    train_loader = train_dataset.to_dataloader(train=True, batch_size=450, num_workers=19, persistent_workers=True)
-    val_loader = val_dataset.to_dataloader(train=False, batch_size=450, num_workers=19, persistent_workers=True)
-    test_loader = test_dataset.to_dataloader(train=False, batch_size=450, num_workers=19, persistent_workers=True)
+    train_loader = train_dataset.to_dataloader(train=True, batch_size=500, num_workers=19, persistent_workers=True)
+    val_loader = val_dataset.to_dataloader(train=False, batch_size=500, num_workers=19, persistent_workers=True)
+    test_loader = test_dataset.to_dataloader(train=False, batch_size=500, num_workers=19, persistent_workers=True)
 
     # Train the model
     train(train_dataset, train_loader, val_loader)
 
     # Load the best model and test
-    model_state_dict = torch.load("NHITS_forecasting_model.pt")
-    model = NHiTS.from_dataset(train_dataset, learning_rate = 1e-04, weight_decay=1e-4,
+    model_state_dict = torch.load("NHITS_forecasting_model_ret.pt")
+    model = NHiTS.from_dataset(train_dataset, learning_rate = 1e-03, weight_decay=1e-4,
                                hidden_size=64, log_val_interval=1, batch_normalization=True,
-                               loss=nn.SmoothL1Loss())
+                               loss=QuantileLoss(quantiles=[0.001, 0.01, 0.05, 0.5, 0.95, 0.99, 0.999]))
     model.load_state_dict(model_state_dict)
-    test(model, test_loader, test_dataset)
+    train_loader = train_dataset.to_dataloader(train=False, batch_size=350, num_workers=19, persistent_workers=True)
+    #test(model, train_loader, train_dataset, mode='train')
+    test(model, test_loader, test_dataset, mode='test')
 
     t2 = datetime.now()
     print(f"Finished job at {t2} with job duration {t2 - t1}")
