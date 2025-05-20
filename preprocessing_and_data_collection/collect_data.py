@@ -50,7 +50,7 @@ def get_stock_data(db: wrds.Connection, stock_tickers: list[str], output_path: s
 
     # For each ticker we want get the adjusted price data
     for ticker in stock_tickers:
-        get_CRSP_data_with_dates(db=db, ticker_symbol=ticker, save_data=True, 
+        get_CRSP_ret_data_with_dates(db=db, ticker_symbol=ticker, save_data=True, 
                                  start_date=STOCK_START_DATE, end_date=STOCK_END_DATE, output_path=output_path)
 
 
@@ -66,7 +66,7 @@ if __name__ == '__main__':
 
     # For each ticker get the stock data
     tickers = sp500_data["Symbol"].to_list()
-    output_path = "SP500_data_sampled"
+    output_path = "SP500_data_sampled_ret"
     initialize_directory(output_path)
     get_stock_data(db=db, stock_tickers=tickers, output_path=output_path)
 
