@@ -242,34 +242,6 @@ def test(model: NHiTS, test_dataloader:DataLoader, test_dataset: TimeSeriesDataS
             plt.close()
 
             ticker_index += 1
-
-
-
-
-
-
-    # # Go through the last indexes (last prediction windows for each stock in the test set)
-    # # and append the required data to plot the time series
-    # for ticker_index, index in enumerate(lastest_index):
-    #     tick = tickers[ticker_index]
-    #     time_idx = predictions.x["decoder_time_idx"][index]
-    #     t_proj = predictions.x["decoder_target"][index].detach().cpu().numpy()
-    #     p_proj = predictions.output[index].numpy()
-    #     stock_projection[tick] = {"time" : time_idx, "true": t_proj, "pred": p_proj}
-
-    # # Plot for each stock
-    # pdf_path = f"{mode}_latest_stock_predictions.pdf"
-    # with PdfPages(pdf_path) as pdf:
-    #     for stock, data in stock_projection.items():
-    #         fig = plt.figure(figsize=(8, 6))
-    #         plt.plot(data["true"], label="Actual", color="blue")
-    #         plt.plot(data["pred"], label="Predicted", color="orange")
-    #         plt.title(f"Predicted vs Actual for stock {stock} (last window)")
-    #         plt.legend()
-    #         plt.xlabel("Day")
-    #         plt.ylabel("returns (multiplied by 100)")
-    #         pdf.savefig(fig, bbox_inches='tight')
-    #         plt.close()
     
 
 if __name__ == '__main__':
