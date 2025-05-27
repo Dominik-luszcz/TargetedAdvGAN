@@ -4,10 +4,101 @@ from datetime import datetime
 from pathlib import Path
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
 from sklearn.model_selection import train_test_split
-
+import torch
 
 from get_CRSP_data import *
 from helper_functions import *
+
+def exponential_moving_average(adjprc: torch.Tensor, span: int):
+
+    alpha = 2.0 / (span + 1.0)
+
+    ema = torch.zeros_like(adjprc) 
+    ema[0] = adjprc[0]
+
+    # formula taken from the pandas definition
+    for i in range(1, len(adjprc)):
+        ema[i] = (1 - alpha) * adjprc[i-1] + alpha * adjprc[i]
+
+    return ema
+
+def feature_generation(adjprc: torch.Tensor):
+
+    weight5 = torch.ones((1,1,5))/5
+    weight10 = torch.ones((1,1,10))/10
+    weight20 = torch.ones((1,1,20))/20
+    rolling_mean5 = torch.nn.functional.conv1d(adjprc.unsqueeze(0).unsqueeze(0), weight5, stride=1)
+
+    rolling_mean10 = torch.nn.functional.conv1d(adjprc.unsqueeze(0).unsqueeze(0), weight10, stride=1)
+
+    rolling_mean20 = torch.nn.functional.conv1d(adjprc.unsqueeze(0).unsqueeze(0), weight20, stride=1)
+
+    # stdevs: Variance = E[x^2] - E[x]^2
+    # so E[x] = rolling_meanX => E[x]^2 = rolling_meanX ^ 2
+    rollingExp_mean5 = torch.nn.functional.conv1d(adjprc.unsqueeze(0).unsqueeze(0) ** 2, weight5, stride=1)
+    rollingExp_mean10 = torch.nn.functional.conv1d(adjprc.unsqueeze(0).unsqueeze(0) ** 2, weight10, stride=1)
+    rollingExp_mean20 = torch.nn.functional.conv1d(adjprc.unsqueeze(0).unsqueeze(0) ** 2, weight20, stride=1)
+
+    rolling_stdev5 = torch.sqrt(rollingExp_mean5 - rolling_mean5**2 + 1e-06)
+    rolling_stdev10 = torch.sqrt(rollingExp_mean10 - rolling_mean10**2 + 1e-06)
+    rolling_stdev20 = torch.sqrt(rollingExp_mean20 - rolling_mean20**2 + 1e-06)
+    # but we have padding and the model fills the first x values with something (either adjprc or mean rolling_stdev) so we have to fix that
+    rolling_mean5 = rolling_mean5.squeeze(0).squeeze(0)
+    rolling_mean5 = torch.cat([adjprc[:4], rolling_mean5])
+    rolling_stdev5 = rolling_stdev5.squeeze(0).squeeze(0)
+    rolling_stdev5 = torch.cat([torch.full(size=[4], fill_value=torch.mean(rolling_stdev5.squeeze(0).squeeze(0)).item()), rolling_stdev5])
+
+    rolling_mean10 = rolling_mean10.squeeze(0).squeeze(0)
+    rolling_mean10 = torch.cat([adjprc[:9], rolling_mean10])
+    rolling_stdev10 = rolling_stdev10.squeeze(0).squeeze(0)
+    rolling_stdev10 = torch.cat([torch.full(size=[9], fill_value=torch.mean(rolling_stdev10.squeeze(0).squeeze(0)).item()), rolling_stdev10])
+
+    rolling_mean20 = rolling_mean20.squeeze(0).squeeze(0)
+    rolling_mean20 = torch.cat([adjprc[:19], rolling_mean20])
+    rolling_stdev20 = rolling_stdev20.squeeze(0).squeeze(0)
+    rolling_stdev20 = torch.cat([torch.full(size=[19], fill_value=torch.mean(rolling_stdev20.squeeze(0).squeeze(0)).item()), rolling_stdev20])
+
+    # log returns 
+    log_returns = torch.log(adjprc[1:]/adjprc[:-1]) 
+    log_returns = torch.cat([torch.tensor([0.0]), log_returns])
+
+    # ROC (percetn change of 5)
+    roc5 = (adjprc[5:] - adjprc[:-5]) / adjprc[:-5]
+    roc5 = torch.cat([torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0]), roc5])
+
+    # exponential moving averages
+    ema_5 = exponential_moving_average(adjprc=adjprc, span=5)
+    ema_10 = exponential_moving_average(adjprc=adjprc, span=10)
+    ema_20 = exponential_moving_average(adjprc=adjprc, span=20)
+
+    features = torch.stack([rolling_mean5, rolling_mean10, rolling_mean20, 
+                             rolling_stdev5, rolling_stdev10, rolling_stdev20, 
+                             log_returns, roc5, ema_5, ema_10, ema_20], dim=1)
+
+
+    # Because we are doing 1 recording at a time, the standard scalar for teh features (not target) are just the mean and stdev of the recording
+    # Similarly, the quantiles are the same for the target for the robust scalar for adjprc
+
+    avg = torch.mean(features, dim=0)
+    stdev = torch.std(features, dim=0)
+
+    features = (features - avg) / stdev
+
+    # median = torch.median(adjprc, dim=0).values
+    # q75 = torch.quantile(adjprc, q=0.75, dim=0)
+    # q25 = torch.quantile(adjprc, q=0.25, dim=0)
+    # #adjprc = (adjprc - median) / (q75 - q25)
+
+    # scale_ = q75 - q25
+    # center_ = median
+
+    center_ = np.median(adjprc.detach().numpy())
+    scale_ = (np.quantile(adjprc.detach().numpy(), q=0.75) - np.quantile(adjprc.detach().numpy(), q=0.25)) / 2
+
+    features = torch.hstack([adjprc.unsqueeze(-1), features])
+
+    return features, scale_, center_
+        
 
 '''
 Given a data_path of csv files with crsp data, preprocess the data and save it to output_path
@@ -22,66 +113,32 @@ def preprocess(data_path: str, output_path: str):
             if len(df) < 1250:
                 continue
 
-            standardScalar = RobustScaler()
+            adjprc = torch.from_numpy(df["adjprc"].values)
 
-            if df["adjprc"].isnull().any():
-                df["adjprc"] = df["adjprc"].interpolate(method="linear")
-                print(entry)
-
-            if df["adjprc"].isnull().any():
-                print(entry)
-
-            # Take the log adjprc
-            #df["adjprc"] = np.log(df["adjprc"])
+            # If missing values just skip
+            if torch.isnan(adjprc).any():
+                continue
 
 
-            # Need to compute rolling means and stdev for the adjprc
-            # For the NaN means, fill them in with the corresponding adjprc (only affects the first k, where k = window size)
-            df["adjprc_rolling_mean3"] = df["adjprc"].rolling(3).mean()
-            df["adjprc_rolling_mean3"] = df["adjprc_rolling_mean3"].fillna(df["adjprc"])
-            df["adjprc_rolling_mean5"] = df["adjprc"].rolling(5).mean()
-            df["adjprc_rolling_mean5"] = df["adjprc_rolling_mean5"].fillna(df["adjprc"])
-            df["adjprc_rolling_mean10"] = df["adjprc"].rolling(10).mean()
-            df["adjprc_rolling_mean10"] = df["adjprc_rolling_mean10"].fillna(df["adjprc"])
-            df["adjprc_rolling_mean20"] = df["adjprc"].rolling(20).mean()
-            df["adjprc_rolling_mean20"] = df["adjprc_rolling_mean20"].fillna(df["adjprc"])
+            features = feature_generation(adjprc)
 
-            # For the NaN stdevs, fill them in with the 0
-            df["adjprc_rolling_stdev3"] = df["adjprc"].rolling(3).std()
-            df["adjprc_rolling_stdev3"] = df["adjprc_rolling_stdev3"].fillna(df["adjprc_rolling_stdev3"].mean())
-            df["adjprc_rolling_stdev5"] = df["adjprc"].rolling(5).std()
-            df["adjprc_rolling_stdev5"] = df["adjprc_rolling_stdev5"].fillna(df["adjprc_rolling_stdev5"].mean())
-            df["adjprc_rolling_stdev10"] = df["adjprc"].rolling(10).std()
-            df["adjprc_rolling_stdev10"] = df["adjprc_rolling_stdev10"].fillna(df["adjprc_rolling_stdev10"].mean())
-            df["adjprc_rolling_stdev20"] = df["adjprc"].rolling(20).std()
-            df["adjprc_rolling_stdev20"] = df["adjprc_rolling_stdev20"].fillna(df["adjprc_rolling_stdev20"].mean())
-
-            # Compute the log returns
-            df["log_returns"] = np.log(df["adjprc"]) - np.log(df["adjprc"].shift(1))
-            df["log_returns"] = df["log_returns"].fillna(0)
-            df["ROC_5"] = df["adjprc"].pct_change(5)
-            df["ROC_5"] = df["ROC_5"].fillna(0)
-
-
-            df["ema_10"] = df["adjprc"].ewm(span=10).mean()
-            df["ema_20"] = df['adjprc'].ewm(span=20).mean()
-
-
+            columns = ["adjprc", "rolling_mean5", "rolling_mean10", "rolling_mean20", 
+                             "rolling_stdev5", "rolling_stdev10", "rolling_stdev20", 
+                             "log_returns", "roc5", "ema_5", "ema_10", "ema_20"]
+            
+            features_df = pd.DataFrame(features.detach().cpu().numpy(), columns=columns)
+            
             # add the specific day of the week as a feature, as stock 
             # markets tend to have a lull on Monday and improve as the week goes on
             df["date"] = pd.to_datetime(df["date"])
-            df["adjprc_day"] = df["date"].dt.day_of_week
+            features_df["adjprc_day"] = df["date"].dt.day_of_week
 
-            df["time_idx"] = np.arange(len(df))
 
-            # Save the feature file in the output_folder
-            df = df.drop(columns=["permno", "date"])
-            # Use StandardScalar to scale the features (adjprc is scaled when setting up the dataset)
-            to_scale = ["adjprc_rolling_mean3", "adjprc_rolling_mean5", "adjprc_rolling_mean10", "adjprc_rolling_mean20",
-                "adjprc_rolling_stdev3", "adjprc_rolling_stdev5", "adjprc_rolling_stdev10", "adjprc_rolling_stdev20",
-                "log_returns", "ROC_5", "ema_10", "ema_20"]
-            df[to_scale] = standardScalar.fit_transform(df[to_scale])
-            df.to_csv(f"{output_path}/{df["ticker"].to_numpy()[0]}-features.csv", index=False)
+            features_df["time_idx"] = np.arange(len(df))
+
+            features_df["ticker"] = df["ticker"]
+
+            features_df.to_csv(f"{output_path}/{df["ticker"].to_numpy()[0]}-features.csv", index=False)
 
 
 def determine_split(ticker_path: str, feature_path: str) -> None:
@@ -127,7 +184,7 @@ if __name__ == '__main__':
     t1 = datetime.now()
     print(f"Started job at {t1}")
 
-    #preprocess("SP500_data", "SP500_Features_adjprc")
+    preprocess("SP500_data", "SP500_Features_adjprc")
     determine_split("sp500_tickers.csv", 'SP500_Features_adjprc')
     
     t2 = datetime.now()
