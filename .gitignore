@@ -6,3 +6,6 @@ checkpoints/*
 *.png
 *.ckpt
 *.pth
+*.txt
+train_dataset.npy
+*.npy

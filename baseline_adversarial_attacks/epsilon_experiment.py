@@ -9,6 +9,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 import matplotlib.pyplot as plt
 import torch.nn as nn
 from AdversarialAttackClasses import *
+from collections import defaultdict
 
 from torch.utils.data import DataLoader
 
@@ -69,7 +70,7 @@ def get_epsilon(df: pd.DataFrame):
     ret = torch.abs(adjprc[1:] / adjprc[:-1])
     return torch.mean(ret)
 
-def perform_adversarial_attack(data_path, mode=0, output_path = '.'):
+def run_baseline_attacks(data_path, mode=0, output_path = '.', eps=0):
     model_state_dict = torch.load("NHITS_forecasting_model.pt")
     params = torch.load("./NHITS_params.pt", weights_only=False)
     params["loss"] = pf.QuantileLoss(quantiles=[0.001, 0.01, 0.05, 0.5, 0.95, 0.99, 0.999])
@@ -79,17 +80,7 @@ def perform_adversarial_attack(data_path, mode=0, output_path = '.'):
     total_attack_error = 0
     k = 0
 
-    # output_path = "Attack_Outputs"
-    # initialize_directory(output_path)
-
     mae_experiment = []
-    # initialize_directory(f"{output_path}/StealthyBIM")
-    # initialize_directory(f"{output_path}/MIFGSM")
-    # initialize_directory(f"{output_path}/BIM")
-    # initialize_directory(f"{output_path}/FGSM")
-    # initialize_directory(f"{output_path}/TarBIM_up")
-    # initialize_directory(f"{output_path}/TarBIM_down")
-    # initialize_directory(f"{output_path}/CW")
 
     i = 0
 
@@ -106,7 +97,7 @@ def perform_adversarial_attack(data_path, mode=0, output_path = '.'):
                 df = pd.read_csv(entry).tail(SAMPLE_LENGTH)
                 df = df.reset_index(drop=True)
 
-            eps = get_epsilon(df)
+            #eps = get_epsilon(df)
 
             # 1. FGSM
             fgsm = FGSM(model, epsilon=eps)
@@ -130,7 +121,7 @@ def perform_adversarial_attack(data_path, mode=0, output_path = '.'):
             tar_bim = TargetedIterativeMethod(model, iterations=10, direction=-1, margin=100, epsilon=eps)
             tar_bim_normal_down, tar_D_bim_adjprc, tar_bim_attack_down = tar_bim.attack(df)
 
-            cw = CW_Attack(model, iterations=100 * 2.5, epsilon=2.5, c=1, direction=-1, size_penalty=0.1)
+            cw = CW_Attack(model, iterations=int(100 * eps), epsilon=eps, c=1, direction=-1, size_penalty=0.1)
             cw_normal, cw_adjprc, cw_attack = cw.attack(df)
 
             attack_df = pd.DataFrame()
@@ -162,30 +153,9 @@ def perform_adversarial_attack(data_path, mode=0, output_path = '.'):
 
             attack_df.to_csv(f"{output_path}/{entry.name.split(".csv")[0]}_attackdf.csv", index=False)
 
-
-            # plot_figure(normal = s_bim_normal, attack = s_bim_attack, ticker = entry.name.split(".csv")[0], eps = eps,
-            #             method='StealthyBIM', output_path=f"{output_path}/StealthyBIM")
-            
-            # plot_figure(normal = mi_fgsm_normal, attack = mi_fgsm_attack, ticker = entry.name.split(".csv")[0], eps = eps,
-            #             method='MIFGSM', output_path=f"{output_path}/MIFGSM")
-            
-            # plot_figure(normal = bim_normal, attack = bim_attack, ticker = entry.name.split(".csv")[0], eps = eps,
-            #             method='BIM', output_path=f"{output_path}/BIM")
-            
-            # plot_figure(normal = fgsm_normal, attack = fgsm_attack, ticker = entry.name.split(".csv")[0], eps = eps,
-            #             method='FGSM', output_path=f"{output_path}/FGSM")
-
-            # plot_figure(normal = tar_bim_normal, attack = tar_bim_attack, ticker = entry.name.split(".csv")[0], eps = eps,
-            #             method='TarBIM', output_path=f"{output_path}/TarBIM_up")
-            # plot_figure(normal = tar_bim_normal_down, attack = tar_bim_attack_down, ticker = entry.name.split(".csv")[0], eps = eps,
-            #             method='TarBIM', output_path=f"{output_path}/TarBIM_down")
-            
-            # plot_figure(normal = cw_normal, attack = cw_attack, ticker = entry.name.split(".csv")[0], eps = eps,
-            #             method='CW', output_path=f"{output_path}/CW")
-
             print(f"Completed: {entry}")
 
-            i += 1
+            #i += 1
 
 def plot_dataframes(data_path, output_dir):
     initialize_directory(f"{output_dir}/AttackAdjprc")
@@ -204,18 +174,128 @@ def plot_dataframes(data_path, output_dir):
                               output_file=f"{output_dir}/AttackPredictions/{ticker}.png")
 
 
+def epsilon_experiment(data_path, output_dir, mode, epsilons = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5]):
+
+    for eps in epsilons:
+        output_path = f"{output_dir}/Epsilon_{eps}"
+        initialize_directory(output_path)
+        run_baseline_attacks(data_path=data_path, mode=mode, output_path=output_path, eps=eps)
+
+def bar_plot(data_path, epsilon, output_dir = '.'):
+
+    maes = {
+        'Normal': 0,
+        'FGSM': 0,
+        'BIM': 0,
+        'MI-FGSM': 0,
+        'Stealthy': 0,
+        'Tar-Up': 0,
+        'Tar-Down': 0,
+        'C&W': 0
+    }
+
+    i = 0
+    for entry in Path(data_path).iterdir():
+        if entry.suffix != ".csv":
+            continue
+
+        df = pd.read_csv(entry)
+        df = df.tail(100)
+        maes["Normal"] += mean_absolute_error(df["adjprc"], df["normal_pred"])
+        maes["FGSM"] += mean_absolute_error(df["adjprc"], df["fgsm_pred"])
+        maes["BIM"] += mean_absolute_error(df["adjprc"], df["bim_pred"])
+        maes["MI-FGSM"] += mean_absolute_error(df["adjprc"], df["mi_fgsm_pred"])
+        maes["Stealthy"] += mean_absolute_error(df["adjprc"], df["stealthy_pred"])
+        maes["Tar-Up"] += mean_absolute_error(df["adjprc"], df["tar_U_bim_pred"])
+        maes["Tar-Down"] += mean_absolute_error(df["adjprc"], df["tar_D_bim_pred"])
+        maes["C&W"] += mean_absolute_error(df["adjprc"], df["cw_pred"])
+
+        i += 1
+
+    values = np.array(list(maes.values())) / i
+
+    labels = maes.keys()
+    colors = ['black', 'red', 'blue', 'green', 'purple', 'magenta', 'cyan', 'brown']
+    plt.bar(labels, values, color=colors)
+    plt.xlabel("Prediction")
+    plt.ylabel("Mean Absolute Error")
+    plt.title("Avg MAE over Different Attack Methods")
+    plt.savefig(f"{output_dir}/avg_attack_mae_{epsilon}.png")
+    plt.close()
+
+    return maes, i
+
+def plot_epsilon_experiment_bar_graph(experiment_maes, output_dir = '.', num_recordings = 1):
+
+    eps = list(experiment_maes.keys())
+    labels = list(list(experiment_maes.values())[0].keys())
+    num_labels = len(labels)
+
+    bar_width = 0.25
+    spacing = 1.5
+
+
+    group_label_positions = []
+    current_position = 0
+
+    fig, ax = plt.subplots(figsize=(14, 6))
+    colors = ['black', 'red', 'blue', 'green', 'yellow', 'grey', 'orange', 'brown']
+
+    for i, e in enumerate(eps):
+        values = np.array(list(experiment_maes[e].values())) / num_recordings
+
+        position = current_position + np.arange(num_labels) * bar_width
+        ax.bar(position, values, bar_width, label=labels, color=colors)
+
+        group_center = current_position + ((bar_width * num_labels)/2 - bar_width/2)
+        group_label_positions.append(group_center)
+        current_position += spacing + num_labels * bar_width
+
+    ax.set_xticks(group_label_positions)
+    ax.set_xticklabels(eps)
+    ax.set_xlabel("Epsilon")
+    ax.set_ylabel("Mean Absolute Error")
+    ax.set_title("Avg MAE Over Different Epsilon Values")
+    ax.legend(labels=labels)
+    plt.savefig(f"{output_dir}/epsilon_experiment.png")
+    plt.close()
+
+
+
+
 
 if __name__ == '__main__':
     t1 = datetime.now()
     print(f"Started job at {t1}")
 
+    eps = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5]
+    experiment_maes = {}
+    for e in eps:
+        maes, i = bar_plot(f'Attack_Outputs/EpsilonExperiments2/first{SAMPLE_LENGTH}/Epsilon_{e}', e, output_dir=f'Attack_Outputs/EpsilonExperiments2/first{SAMPLE_LENGTH}/Epsilon_{e}')
+        experiment_maes[f"{e}"] = maes
+
+    plot_epsilon_experiment_bar_graph(experiment_maes=experiment_maes, output_dir=f'Attack_Outputs/EpsilonExperiments2/first{SAMPLE_LENGTH}', num_recordings=i)
+
+    
+
+
+        #bar_plot(f'Attack_Outputs/EpsilonExperiment/final{SAMPLE_LENGTH}/Epsilon_{e}', e, output_dir=f'Attack_Outputs/EpsilonExperiment/final{SAMPLE_LENGTH}/Epsilon_{e}')
+
+    # output_path = f'Attack_Outputs/EpsilonExperiments2/first{SAMPLE_LENGTH}'
+    # initialize_directory(output_path)
+    # epsilon_experiment("SP500_AttackData_Full", mode=1, output_dir=output_path, epsilons=eps)
+
+    # output_path = f'Attack_Outputs/EpsilonExperiment/final{SAMPLE_LENGTH}'
+    # initialize_directory(output_path)
+    # epsilon_experiment("SP500_AttackData_Full", mode=2, output_dir=output_path, epsilons=eps)
+
     #perform_adversarial_attack("SP500_AttackData_Full", mode=0, output_path='Attack_Outputs/full_recording')
-    perform_adversarial_attack("SP500_AttackData_Full", mode=1, output_path='Attack_Outputs/first500')
-    #perform_adversarial_attack("SP500_AttackData_Full", mode=2, output_path='Attack_Outputs/final500')
+    # perform_adversarial_attack("SP500_AttackData_Full", mode=1, output_path='Attack_Outputs/first500')
+    # perform_adversarial_attack("SP500_AttackData_Full", mode=2, output_path='Attack_Outputs/final500')
 
     #plot_dataframes('Attack_Outputs/full_recording', 'Attack_Outputs/full_recording')
-    plot_dataframes('Attack_Outputs/first500', 'Attack_Outputs/first500')
-    #plot_dataframes('Attack_Outputs/final500', 'Attack_Outputs/final500')
+    # plot_dataframes('Attack_Outputs/first500', 'Attack_Outputs/first500')
+    # plot_dataframes('Attack_Outputs/final500', 'Attack_Outputs/final500')
 
     t2 = datetime.now()
     print(f"Finished job at {t2} with job duration {t2 - t1}")
