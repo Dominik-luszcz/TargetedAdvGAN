@@ -48,11 +48,12 @@ def plot(df: pd.DataFrame, title: str, to_plot: list, output_file: str = '.'):
     plt.figure(figsize=(16, 6))
     colours = ["black", "blue", "green", "red", "brown", "orange", "purple", "cyan", "magenta"]
     i = 0
+    labels = ["adjprc", "FGSM", "BIM", "MI-FGSM", "SIM","TIM (Up)","TAR (Down)","C&W"]
     for prc in to_plot:
         if i == 0:
-            plt.plot(df[prc], label=prc, color=colours[i], linewidth=3, zorder=15)
+            plt.plot(df[prc], label=labels[i], color=colours[i], linewidth=3, zorder=15)
         else:
-            plt.plot(df[prc], label=prc, color=colours[i])
+            plt.plot(df[prc], label=labels[i], color=colours[i])
         i += 1
     plt.title(title)
     plt.legend()
@@ -194,7 +195,7 @@ def plot_dataframes(data_path, output_dir):
     for entry in Path(data_path).iterdir():
         if entry.suffix == ".csv":
             df = pd.read_csv(entry)
-            ticker = entry.name.split("attackdf")[0]
+            ticker = entry.name.split("_attackdf")[0]
             plot(df, title=f"Adjprc for different attacks on {ticker}", to_plot=["adjprc", "fgsm_adprc", "bim_adprc", "mi_fgsm_adprc",
                               "stealthy_adprc","tar_U_bim_adprc","tar_D_bim_adprc","cw_adprc"], 
                               output_file=f"{output_dir}/AttackAdjprc/{ticker}.png")
@@ -210,7 +211,7 @@ if __name__ == '__main__':
     print(f"Started job at {t1}")
 
     #perform_adversarial_attack("SP500_AttackData_Full", mode=0, output_path='Attack_Outputs/full_recording')
-    perform_adversarial_attack("SP500_AttackData_Full", mode=1, output_path='Attack_Outputs/first500')
+    #perform_adversarial_attack("SP500_AttackData_Full", mode=1, output_path='Attack_Outputs/first500')
     #perform_adversarial_attack("SP500_AttackData_Full", mode=2, output_path='Attack_Outputs/final500')
 
     #plot_dataframes('Attack_Outputs/full_recording', 'Attack_Outputs/full_recording')

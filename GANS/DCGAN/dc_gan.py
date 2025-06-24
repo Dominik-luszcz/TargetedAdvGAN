@@ -7,7 +7,6 @@ import torch.nn as nn
 from sub_models import *
 from datetime import datetime
 import matplotlib.pyplot as plt
-from scipy.stats import wasserstein_distance_nd
 from torch.utils.data import DataLoader
 import random
 import os
@@ -47,6 +46,7 @@ class DCGAN(pl.LightningModule):
         self.d_loss_real = []
         self.d_loss_fake = []
         self.g_loss = []
+        self.final_w_dists = []
 
         self.save_hyperparameters()
 
@@ -96,18 +96,6 @@ class DCGAN(pl.LightningModule):
         fake_data = self.generator(z)
         discriminator_output_fake = self.discriminator(fake_data)
         discriminator_output_fake = discriminator_output_fake.mean(dim=1)
-        # Now we want to update the generator gradients to make our fake data be classified as real data 
-        # mean = torch.mean(fake_data, dim=1)
-        # stdev = torch.std(fake_data, dim=1)
-        # kurtosis = torch.sum(((fake_data - mean[:, None]) / stdev[:, None]) ** 4, dim=1).mean(dim=1)
-        # fake_kurtosis = kurtosis.mean()
-
-        # mean = torch.mean(real_data, dim=1)
-        # stdev = torch.std(real_data, dim=1)
-        # kurtosis = torch.sum(((real_data - mean[:, None]) / stdev[:, None]) ** 4, dim=1).mean(dim=1)
-        # real_kurtosis = kurtosis.mean()
-
-        # k_loss = torch.abs(real_kurtosis - fake_kurtosis)
 
         generator_loss = nn.functional.binary_cross_entropy(discriminator_output_fake, real_data_labels + 0.15) 
 
@@ -216,11 +204,12 @@ class DCGAN_Callback(pl.Callback):
         real_iqr = torch.stack(real_iqr).mean()
         real_skew = torch.stack(real_skew).mean()
         real_kurtosis = torch.stack(real_kurtosis).mean()
+
         
        
         model.eval()
         with torch.no_grad():
-            z = torch.randn(num_to_sample, model.noise_dim, dtype=torch.float64).unsqueeze(-1)
+            z = torch.randn(num_to_sample, 50, dtype=torch.float64, device=DEVICE).unsqueeze(-1)
             fake_output = model.generator(z)
 
             # Need to scale back to log returns
@@ -236,8 +225,10 @@ class DCGAN_Callback(pl.Callback):
         q25 = torch.quantile(fake_output, q=0.25, dim=1)
         iqr = q75 - q25
 
-        skew = torch.sum(((fake_output - mean[:, None]) / stdev[:, None]) ** 3, dim=1).mean(dim=1)
-        kurtosis = torch.sum(((fake_output - mean[:, None]) / stdev[:, None]) ** 4, dim=1).mean(dim=1)
+        z = (fake_output.squeeze(-1) - mean) / stdev
+
+        skew = torch.mean(z ** 3, dim=1)
+        kurtosis = torch.mean(z ** 4, dim=1)
 
         fake_means = mean.mean()
         fake_stdevs = stdev.mean()
@@ -263,7 +254,7 @@ class DCGAN_Callback(pl.Callback):
         model.train()
         # plot example fake data
         # first we need to scale the fake data to match that of the log returns
-        fake_output = fake_output.squeeze(-1).squeeze(0).detach()[0]
+        fake_output = fake_output.squeeze(-1).squeeze(0).detach()[0].cpu()
         plt.plot(fake_output.numpy())
         plt.xlabel('Time (days)')
         plt.ylabel('Log Returns')
@@ -287,3 +278,4 @@ class DCGAN_Callback(pl.Callback):
         model.discriminator_losses_fake = []
         model.discriminator_losses_real = []
         model.generator_losses = []
+        model.w_dist = []
