@@ -39,8 +39,8 @@ class Generator(nn.Module):
         output = self.generator(noise)
         output = output[:, :, :self.sample_size] # will not hardcode it, fix this after
         #output = output[:, :, :2433]
-        output = output - torch.mean(output)
-        output = 0.1 * output # enforce returns to be between -0.2 and 0.2
+        #output = output - torch.mean(output)
+        #output = 0.1 * output # enforce returns to be between -0.2 and 0.2
         return torch.permute(output, (0,2,1))
 
 class Discriminator(nn.Module):

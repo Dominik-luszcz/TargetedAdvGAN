@@ -11,7 +11,7 @@ from pytorch_forecasting.data import GroupNormalizer
 import matplotlib.pyplot as plt
 from torch import nn
 from matplotlib.backends.backend_pdf import PdfPages
-from sklearn.metrics import mean_absolute_error
+from sklearn.metrics import mean_absolute_error, root_mean_squared_error, mean_absolute_percentage_error
 from lightning.pytorch.tuner import Tuner
 
 
@@ -210,7 +210,7 @@ def test_last_window(model: NHiTS, test_dataloader:DataLoader, test_dataset: Tim
     print(f"TOTAL MAE: {total_mae}")
 
 def test(model: NHiTS, test_dataloader:DataLoader, test_dataset: TimeSeriesDataSet, mode: str = "test", output_path:str = "."):
-    # Make the predictions
+       # Make the predictions
     predictions = model.predict(test_dataloader, return_x=True, mode="prediction", trainer_kwargs=dict(accelerator="cpu"))
 
     # Get all our test tickers
@@ -227,10 +227,13 @@ def test(model: NHiTS, test_dataloader:DataLoader, test_dataset: TimeSeriesDataS
     starts_and_ends = torch.cat([starts, ends], dim=1)
 
     # For each ticker, find the average prediction and plot it
-    pdf_path = f"{mode}_full_prediction.pdf"
+    pdf_path = f"{mode}_full_prediction2.pdf"
     with PdfPages(pdf_path) as pdf:
         ticker_index = 0
         total_mae = 0
+        total_rmse = 0
+        total_mape = 0
+        
         for start, end in starts_and_ends:
             corresponding_time = time_idx[start:end].flatten().numpy()
             corresponding_actuals = actuals[start:end].flatten().numpy()
@@ -246,13 +249,18 @@ def test(model: NHiTS, test_dataloader:DataLoader, test_dataset: TimeSeriesDataS
                 "Prediction" : 'mean',
                 'Actual': 'mean'
             })
-            # Calculate the error
-            mase = mean_absolute_error(df["Actual"], df["Prediction"])
-            total_mae += mase
+            # Calculate the errors
+            mae = mean_absolute_error(df["Actual"], df["Prediction"])
+            total_mae += mae
+
+            rmse = root_mean_squared_error(df["Actual"], df["Prediction"])
+            total_rmse += rmse
+            mape = mean_absolute_percentage_error(df["Actual"], df["Prediction"])
+            total_mape += mape
             fig = plt.figure(figsize=(14, 6))
             plt.plot(df.index, df["Actual"], label="Actual", color="blue")
             plt.plot(df.index, df["Prediction"], label="Predicted", color="orange")
-            plt.title(f"Predicted vs Actual for stock {tickers[ticker_index]} (all), MAE: {mase}")
+            plt.title(f"Predicted vs Actual for stock {tickers[ticker_index]} (all), MAE: {mae}")
             plt.legend()
             plt.xlabel("Day")
             plt.ylabel("adjprc")
@@ -263,7 +271,12 @@ def test(model: NHiTS, test_dataloader:DataLoader, test_dataset: TimeSeriesDataS
 
             ticker_index += 1
     total_mae = total_mae / len(starts_and_ends)
-    print(f"TOTAL MAE: {total_mae}")
+    total_rmse = total_rmse / len(starts_and_ends)
+    total_mape = total_mape / len(starts_and_ends)
+    with open(f"{output_path}/avg_metrics2.txt", 'a') as f:
+        f.write(f"Average MAE: {total_mae}\n")
+        f.write(f"Average RMSE: {total_rmse}\n")
+        f.write(f"Average MAPE: {total_mape}\n")
 
 def find_optimal_learning_rate(trainer: pl.Trainer, model: NHiTS, train_dataloader, val_dataloader):
 
@@ -288,13 +301,13 @@ if __name__ == '__main__':
     train_dataset.save("train_dataset.npy")
 
     # Set up the dataloaders
-    train_loader = train_dataset.to_dataloader(train=True, batch_size=500, num_workers=19, persistent_workers=True)
-    val_loader = val_dataset.to_dataloader(train=False, batch_size=500, num_workers=19, persistent_workers=True)
+    # train_loader = train_dataset.to_dataloader(train=True, batch_size=500, num_workers=19, persistent_workers=True)
+    # val_loader = val_dataset.to_dataloader(train=False, batch_size=500, num_workers=19, persistent_workers=True)
     test_loader = test_dataset.to_dataloader(train=False, batch_size=500, num_workers=19, persistent_workers=True)
 
 
     #Train the model
-    train(train_dataset, train_loader, val_loader)
+    #train(train_dataset, train_loader, val_loader)
 
     #Load the best model and test
     model_state_dict = torch.load("NHITS_forecasting_model.pt")

@@ -17,7 +17,7 @@ DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 class DCGAN(pl.LightningModule):
     def __init__(self, generator_hidden_dim, noise_dim, generator_output_dim, discriminator_hidden_dim,
-                 sample_size, n_critic = 5, lmda = 5, beta1 = 0.0, beta2=0.9,
+                 sample_size, n_critic = 5, lmda = 1, beta1 = 0.0, beta2=0.9,
                  scale_max = None, scale_min = None, lr=0.0001, plot_paths='.'):
         super().__init__()
 
@@ -37,7 +37,7 @@ class DCGAN(pl.LightningModule):
         self.beta2 = beta2
 
         self.generator = Generator(output_dim=generator_output_dim, sample_size=sample_size)
-        self.discriminator = Discriminator(input_dim=2, hidden_dim=discriminator_hidden_dim, output_dim=1)
+        self.discriminator = Discriminator(input_dim=1, hidden_dim=discriminator_hidden_dim, output_dim=1)
 
         self.automatic_optimization = False
 
@@ -47,11 +47,13 @@ class DCGAN(pl.LightningModule):
         self.batch_sizes = []
         self.w_dist = []
         self.example_outputs = []
+        self.gradient_penalties = []
 
         self.d_loss_real = []
         self.d_loss_fake = []
         self.g_loss = []
         self.final_w_dists = []
+        self.g_pens = []
 
         self.save_hyperparameters()
 
@@ -113,8 +115,9 @@ class DCGAN(pl.LightningModule):
         discrim_real_loss = 0
         discrim_fake_loss = 0
         w_dist = 0
+        g_pen = 0
         if self.current_epoch < 3:
-            n_critic = self.n_critic * 3
+            n_critic = self.n_critic #* 3
         else:
             n_critic = self.n_critic
         for i in range(n_critic):
@@ -142,12 +145,14 @@ class DCGAN(pl.LightningModule):
             discrim_fake_loss += discriminator_output_fake.detach()
             discrim_real_loss += discriminator_output_real.detach()
             w_dist += (discriminator_output_fake.detach() - discriminator_output_real.detach())
+            g_pen += gradient_penalty.detach()
         
         print("Done Critic")
 
-        self.discriminator_losses_fake.append(discrim_fake_loss / self.n_critic)
-        self.discriminator_losses_real.append(discrim_real_loss / self.n_critic)
-        self.w_dist.append(w_dist / self.n_critic)
+        self.discriminator_losses_fake.append(discrim_fake_loss / n_critic)
+        self.discriminator_losses_real.append(discrim_real_loss / n_critic)
+        self.w_dist.append(w_dist / n_critic)
+        self.gradient_penalties.append(g_pen / n_critic)
 
         # Step 2: Train the generator
         for p in self.discriminator.parameters():
@@ -172,8 +177,8 @@ class DCGAN(pl.LightningModule):
 
     
     def configure_optimizers(self):
-        generator_optimizer = torch.optim.Adam(self.generator.parameters(), lr=1e-04, betas=(self.beta1, self.beta2))
-        discriminator_optimizer = torch.optim.Adam(self.discriminator.parameters(), lr=1e-04, betas=(self.beta1, self.beta2))
+        generator_optimizer = torch.optim.Adam(self.generator.parameters(), lr=1e-05, betas=(self.beta1, self.beta2))
+        discriminator_optimizer = torch.optim.Adam(self.discriminator.parameters(), lr=1e-05, betas=(self.beta1, self.beta2))
 
         return generator_optimizer, discriminator_optimizer
     
@@ -190,11 +195,13 @@ class DCGAN_Callback(pl.Callback):
         discriminator_losses_fake = torch.Tensor(model.discriminator_losses_fake)
         batch_sizes = torch.Tensor(model.batch_sizes)
         w_dists = torch.Tensor(model.w_dist)
+        g_pens = torch.Tensor(model.gradient_penalties)
 
         d_loss_real = sum(discriminator_losses_real *  batch_sizes) / sum(batch_sizes)
         d_loss_fake = sum(discriminator_losses_fake *  batch_sizes) / sum(batch_sizes)
         g_loss = sum(generator_losses *  batch_sizes) / sum(batch_sizes)
         w_dist = sum(w_dists *  batch_sizes) / sum(batch_sizes)
+        g_pen = sum(g_pens * batch_sizes) / sum(batch_sizes)
 
         # make epoch dir
         os.makedirs(f'{model.plot_paths}/Epoch_{model.current_epoch}')
@@ -202,7 +209,7 @@ class DCGAN_Callback(pl.Callback):
         
 
         # 1. Sample n intervals of 400 days and compute stats like kurtosis and skew
-        num_to_sample = 16
+        num_to_sample = 32
         real_means = []
         real_stdevs = []
         real_iqr = []
@@ -265,8 +272,10 @@ class DCGAN_Callback(pl.Callback):
         q25 = torch.quantile(fake_output, q=0.25, dim=1)
         iqr = q75 - q25
 
-        skew = torch.sum(((fake_output - mean[:, None]) / stdev[:, None]) ** 3, dim=1).mean(dim=1)
-        kurtosis = torch.sum(((fake_output - mean[:, None]) / stdev[:, None]) ** 4, dim=1).mean(dim=1)
+        z = (fake_output.squeeze(-1) - mean) / stdev
+
+        skew = torch.mean(z ** 3, dim=1)
+        kurtosis = torch.mean(z ** 4, dim=1)
 
         fake_means = mean.mean()
         fake_stdevs = stdev.mean()
@@ -312,6 +321,7 @@ class DCGAN_Callback(pl.Callback):
         model.d_loss_real.append(d_loss_real)
         model.g_loss.append(g_loss)
         model.final_w_dists.append(w_dist)
+        model.g_pens.append(g_pen)
 
         model.w_dist = []
         model.batch_sizes = []
@@ -319,3 +329,4 @@ class DCGAN_Callback(pl.Callback):
         model.discriminator_losses_real = []
         model.generator_losses = []
         model.w_dist = []
+        model.gradient_penalties = []

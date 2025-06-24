@@ -5,7 +5,7 @@ from datetime import datetime
 import pytorch_forecasting as pf
 from pathlib import Path
 from sklearn.preprocessing import RobustScaler
-from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.metrics import mean_absolute_error, mean_squared_error, root_mean_squared_error, mean_absolute_percentage_error
 import matplotlib.pyplot as plt
 import torch.nn as nn
 from AdversarialAttackClasses import *
@@ -189,14 +189,36 @@ def bar_plot(data_path, epsilon, output_dir = '.'):
         'BIM': 0,
         'MI-FGSM': 0,
         'Stealthy': 0,
-        'Tar-Up': 0,
-        'Tar-Down': 0,
+        'TIM-Up': 0,
+        'TIM-Down': 0,
+        'C&W': 0
+    }
+
+    rsmes = {
+        'Normal': 0,
+        'FGSM': 0,
+        'BIM': 0,
+        'MI-FGSM': 0,
+        'Stealthy': 0,
+        'TIM-Up': 0,
+        'TIM-Down': 0,
+        'C&W': 0
+    }
+
+    mapes = {
+        'Normal': 0,
+        'FGSM': 0,
+        'BIM': 0,
+        'MI-FGSM': 0,
+        'Stealthy': 0,
+        'TIM-Up': 0,
+        'TIM-Down': 0,
         'C&W': 0
     }
 
     i = 0
     for entry in Path(data_path).iterdir():
-        if entry.suffix != ".csv":
+        if entry.suffix != ".csv" or "attackdf" not in entry.name:
             continue
 
         df = pd.read_csv(entry)
@@ -206,9 +228,27 @@ def bar_plot(data_path, epsilon, output_dir = '.'):
         maes["BIM"] += mean_absolute_error(df["adjprc"], df["bim_pred"])
         maes["MI-FGSM"] += mean_absolute_error(df["adjprc"], df["mi_fgsm_pred"])
         maes["Stealthy"] += mean_absolute_error(df["adjprc"], df["stealthy_pred"])
-        maes["Tar-Up"] += mean_absolute_error(df["adjprc"], df["tar_U_bim_pred"])
-        maes["Tar-Down"] += mean_absolute_error(df["adjprc"], df["tar_D_bim_pred"])
+        maes["TIM-Up"] += mean_absolute_error(df["adjprc"], df["tar_U_bim_pred"])
+        maes["TIM-Down"] += mean_absolute_error(df["adjprc"], df["tar_D_bim_pred"])
         maes["C&W"] += mean_absolute_error(df["adjprc"], df["cw_pred"])
+
+        rsmes["Normal"] += root_mean_squared_error(df["adjprc"], df["normal_pred"])
+        rsmes["FGSM"] += root_mean_squared_error(df["adjprc"], df["fgsm_pred"])
+        rsmes["BIM"] += root_mean_squared_error(df["adjprc"], df["bim_pred"])
+        rsmes["MI-FGSM"] += root_mean_squared_error(df["adjprc"], df["mi_fgsm_pred"])
+        rsmes["Stealthy"] += root_mean_squared_error(df["adjprc"], df["stealthy_pred"])
+        rsmes["TIM-Up"] += root_mean_squared_error(df["adjprc"], df["tar_U_bim_pred"])
+        rsmes["TIM-Down"] += root_mean_squared_error(df["adjprc"], df["tar_D_bim_pred"])
+        rsmes["C&W"] += root_mean_squared_error(df["adjprc"], df["cw_pred"])
+
+        mapes["Normal"] += mean_absolute_percentage_error(df["adjprc"], df["normal_pred"])
+        mapes["FGSM"] += mean_absolute_percentage_error(df["adjprc"], df["fgsm_pred"])
+        mapes["BIM"] += mean_absolute_percentage_error(df["adjprc"], df["bim_pred"])
+        mapes["MI-FGSM"] += mean_absolute_percentage_error(df["adjprc"], df["mi_fgsm_pred"])
+        mapes["Stealthy"] += mean_absolute_percentage_error(df["adjprc"], df["stealthy_pred"])
+        mapes["TIM-Up"] += mean_absolute_percentage_error(df["adjprc"], df["tar_U_bim_pred"])
+        mapes["TIM-Down"] += mean_absolute_percentage_error(df["adjprc"], df["tar_D_bim_pred"])
+        mapes["C&W"] += mean_absolute_percentage_error(df["adjprc"], df["cw_pred"])
 
         i += 1
 
@@ -223,7 +263,7 @@ def bar_plot(data_path, epsilon, output_dir = '.'):
     plt.savefig(f"{output_dir}/avg_attack_mae_{epsilon}.png")
     plt.close()
 
-    return maes, i
+    return maes, rsmes, mapes, i
 
 def plot_epsilon_experiment_bar_graph(experiment_maes, output_dir = '.', num_recordings = 1):
 
@@ -239,7 +279,7 @@ def plot_epsilon_experiment_bar_graph(experiment_maes, output_dir = '.', num_rec
     current_position = 0
 
     fig, ax = plt.subplots(figsize=(14, 6))
-    colors = ['black', 'red', 'blue', 'green', 'yellow', 'grey', 'orange', 'brown']
+    colors = ['black', 'red', 'blue', 'green', 'purple', 'grey', 'orange', 'brown']
 
     for i, e in enumerate(eps):
         values = np.array(list(experiment_maes[e].values())) / num_recordings
@@ -257,7 +297,7 @@ def plot_epsilon_experiment_bar_graph(experiment_maes, output_dir = '.', num_rec
     ax.set_ylabel("Mean Absolute Error")
     ax.set_title("Avg MAE Over Different Epsilon Values")
     ax.legend(labels=labels)
-    plt.savefig(f"{output_dir}/epsilon_experiment.png")
+    plt.savefig(f"{output_dir}/epsilon_experiment.png", bbox_inches='tight')
     plt.close()
 
 
@@ -271,10 +311,39 @@ if __name__ == '__main__':
     eps = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5]
     experiment_maes = {}
     for e in eps:
-        maes, i = bar_plot(f'Attack_Outputs/EpsilonExperiments2/first{SAMPLE_LENGTH}/Epsilon_{e}', e, output_dir=f'Attack_Outputs/EpsilonExperiments2/first{SAMPLE_LENGTH}/Epsilon_{e}')
+        output_dir = f'Attack_Outputs/EpsilonExperiments2/first{SAMPLE_LENGTH}/Epsilon_{e}'
+        maes, rsmes, mapes, num_recordings = bar_plot(output_dir, e, output_dir=output_dir)
         experiment_maes[f"{e}"] = maes
 
-    plot_epsilon_experiment_bar_graph(experiment_maes=experiment_maes, output_dir=f'Attack_Outputs/EpsilonExperiments2/first{SAMPLE_LENGTH}', num_recordings=i)
+        temp = maes
+        values = np.array(list(maes.values())) / num_recordings
+        keys = list(maes.keys())
+        for i in range(len(keys)):
+            temp[keys[i]] = values[i]
+            
+        df = pd.DataFrame(temp, index=[0])
+        df.to_csv(f"{output_dir}/{e}_eps_maes.csv")
+
+        temp = rsmes
+        values = np.array(list(rsmes.values())) / num_recordings
+        keys = list(rsmes.keys())
+        for i in range(len(keys)):
+            temp[keys[i]] = values[i]
+            
+        df = pd.DataFrame(temp, index=[0])
+        df.to_csv(f"{output_dir}/{e}_eps_rsmes.csv")
+
+        temp = mapes
+        values = np.array(list(mapes.values())) / num_recordings
+        keys = list(mapes.keys())
+        for i in range(len(keys)):
+            temp[keys[i]] = values[i]
+            
+        df = pd.DataFrame(temp, index=[0])
+        df.to_csv(f"{output_dir}/{e}_eps_mapes.csv")
+        
+
+    plot_epsilon_experiment_bar_graph(experiment_maes=experiment_maes, output_dir=f'Attack_Outputs/EpsilonExperiments2/first{SAMPLE_LENGTH}', num_recordings=1)
 
     
 
