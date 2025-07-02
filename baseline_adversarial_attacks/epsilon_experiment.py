@@ -76,6 +76,7 @@ def run_baseline_attacks(data_path, mode=0, output_path = '.', eps=0):
     params["loss"] = pf.QuantileLoss(quantiles=[0.001, 0.01, 0.05, 0.5, 0.95, 0.99, 0.999])
     model = pf.NHiTS(**params)
     model.load_state_dict(model_state_dict)
+    model.eval()
     total_normal_error = 0
     total_attack_error = 0
     k = 0

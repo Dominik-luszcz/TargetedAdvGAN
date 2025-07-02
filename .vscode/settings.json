@@ -1,0 +1,6 @@
+{
+    "python.REPL.enableREPLSmartSend": false,
+    "files.exclude": {
+        "**/*.png": false
+}
+}

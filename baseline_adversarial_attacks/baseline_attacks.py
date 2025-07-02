@@ -76,12 +76,13 @@ def perform_adversarial_attack(data_path, mode=0, output_path = '.'):
     params["loss"] = pf.QuantileLoss(quantiles=[0.001, 0.01, 0.05, 0.5, 0.95, 0.99, 0.999])
     model = pf.NHiTS(**params)
     model.load_state_dict(model_state_dict)
+    model.eval()
     total_normal_error = 0
     total_attack_error = 0
     k = 0
 
     # output_path = "Attack_Outputs"
-    # initialize_directory(output_path)
+    initialize_directory(output_path)
 
     mae_experiment = []
     # initialize_directory(f"{output_path}/StealthyBIM")
@@ -131,7 +132,7 @@ def perform_adversarial_attack(data_path, mode=0, output_path = '.'):
             tar_bim = TargetedIterativeMethod(model, iterations=10, direction=-1, margin=100, epsilon=eps)
             tar_bim_normal_down, tar_D_bim_adjprc, tar_bim_attack_down = tar_bim.attack(df)
 
-            cw = CW_Attack(model, iterations=100 * 2.5, epsilon=2.5, c=1, direction=-1, size_penalty=0.1)
+            cw = CW_Attack(model, iterations=int(100 * 2.5), epsilon=2.5, c=1, direction=-1, size_penalty=0.1)
             cw_normal, cw_adjprc, cw_attack = cw.attack(df)
 
             attack_df = pd.DataFrame()
@@ -211,11 +212,11 @@ if __name__ == '__main__':
     print(f"Started job at {t1}")
 
     #perform_adversarial_attack("SP500_AttackData_Full", mode=0, output_path='Attack_Outputs/full_recording')
-    #perform_adversarial_attack("SP500_AttackData_Full", mode=1, output_path='Attack_Outputs/first500')
+    perform_adversarial_attack("SP500_AttackData_Full", mode=1, output_path='Attack_Outputs/first400')
     #perform_adversarial_attack("SP500_AttackData_Full", mode=2, output_path='Attack_Outputs/final500')
 
     #plot_dataframes('Attack_Outputs/full_recording', 'Attack_Outputs/full_recording')
-    plot_dataframes('Attack_Outputs/first500', 'Attack_Outputs/first500')
+    #plot_dataframes('Attack_Outputs/first500', 'Attack_Outputs/first500')
     #plot_dataframes('Attack_Outputs/final500', 'Attack_Outputs/final500')
 
     t2 = datetime.now()

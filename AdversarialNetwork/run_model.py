@@ -12,10 +12,11 @@ from pathlib import Path
 import random
 from sklearn.metrics.pairwise import rbf_kernel
 from scipy.stats import gaussian_kde
+import pytorch_forecasting as pf
 
 
 #from path_generation import compute_bond_SDE, compute_stock_SDE
-from wgan_dc import *
+from adv_network import *
 
 import os
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -27,6 +28,13 @@ def initialize_directory(path: str) -> None:
             os.remove(os.path.join(path, filename))
     else:
         os.mkdir(path)
+
+def get_days(recording: pd.DataFrame):
+        recording["date"] = pd.to_datetime(recording["date"])
+        recording["adjprc_day"] = recording["date"].dt.day_of_week
+        days = torch.from_numpy(recording["adjprc_day"].values) # we do not touch categorical features since it would be obvious
+        days = days.type(torch.int)
+        return days
 
 
 class SingleStockDataset(Dataset):
@@ -40,16 +48,16 @@ class SingleStockDataset(Dataset):
         self.sample_size = sample_size
 
         try:
-            self.training_stock = pd.read_csv(f"{stock_folder}/{ticker}.csv")['adjprc'].to_numpy()
+            df = pd.read_csv(f"{stock_folder}/{ticker}.csv")
+            self.training_stock = df['adjprc'].to_numpy()
+            self.days = get_days(df).double()
         except:
             raise ValueError(f"The ticker {ticker} is not in the provided stock folder {stock_folder}")
 
         self.log_returns = torch.from_numpy(np.log(self.training_stock[1:] / self.training_stock[:-1]))
-
+        self.training_stock = torch.from_numpy(self.training_stock)
 
         self.unscaled_returns = self.log_returns
-
-
 
 
         #scale the training data between -1 and 1
@@ -59,30 +67,42 @@ class SingleStockDataset(Dataset):
         print(f"Max Return: {self.max_return}")
         print(f"Min Return: {self.min_return}")
 
-        
-
         self.log_returns = 2 * ((self.log_returns - self.min_return) / (self.max_return - self.min_return)) - 1
 
-        
+        self.time_series_metrics = self.get_metrics()
             
     def __len__(self):
         return self.num_samples
     
     def __getitem__(self, index):
-        start = random.randint(0, len(self.log_returns) - self.sample_size)
-        return self.log_returns[start : start + self.sample_size]
+        start = random.randint(1, len(self.log_returns) - self.sample_size)
+        return self.training_stock[start-1], self.days[start-1: start + self.sample_size], self.log_returns[start : start + self.sample_size]
+    
+    def get_metrics(self):
+        mean = torch.mean(self.unscaled_returns)
+        std = torch.std(self.unscaled_returns)
+
+        z = (self.unscaled_returns - mean) / std
+        skew = torch.mean(z ** 3)
+        kurtosis = torch.mean(z ** 4) - 3
+
+        return {
+            'mean': mean,
+            'stdev': std,
+            'skew': skew,
+            'kurtosis': kurtosis
+        }
 
 
-def train_on_one_stocks(data_files, ticker, num_samples, sample_size, batch_size, num_epochs, output_path, noise_dim,
-           generator_hidden_dim, generator_output_dim, discriminator_hidden_dim, lr=0.0001):
+def train_on_one_stocks(data_files, ticker, num_samples, sample_size, batch_size, num_epochs, output_path, model):
 
     dataset = SingleStockDataset(stock_folder=data_files, ticker=ticker, num_samples=num_samples, sample_size=sample_size)
 
     dataloader = DataLoader(dataset, batch_size=batch_size)#, num_workers=19)
 
-    model = DCGAN(noise_dim=noise_dim, generator_hidden_dim=generator_hidden_dim, generator_output_dim=generator_output_dim, 
-                       discriminator_hidden_dim=discriminator_hidden_dim, lr=lr, plot_paths=output_path,
-                       scale_max = dataset.max_return, scale_min = dataset.min_return, sample_size=sample_size)
+    model = AdversarialNetwork(sample_size=sample_size, time_series_metrics=dataset.time_series_metrics, 
+                               model = model, alpha=1, scale_max=dataset.max_return, scale_min=dataset.min_return,
+                               plot_paths=output_path)
     
     train_callback = ModelCheckpoint(
             monitor="loss",
@@ -94,15 +114,15 @@ def train_on_one_stocks(data_files, ticker, num_samples, sample_size, batch_size
     )
     
     # Init the trainer
-    trainer = pl.Trainer(devices='auto', accelerator='auto', accumulate_grad_batches=1, logger=False, callbacks=[train_callback, DCGAN_Callback(dataset.unscaled_returns)], 
+    trainer = pl.Trainer(devices='auto', accelerator='auto', accumulate_grad_batches=1, logger=False, callbacks=[train_callback, DCGAN_Callback(dataset.unscaled_returns, dataset.days, dataset.training_stock, num_to_sample=32)], 
                          num_sanity_val_steps=0, enable_checkpointing=True, max_epochs=num_epochs,#max_steps=MAX_ITERATIONS,
-                        enable_progress_bar=True, max_time='00:11:00:00', default_root_dir=output_path)
+                        enable_progress_bar=True, max_time='00:10:00:00', default_root_dir=output_path)
     
     trainer.fit(model, dataloader)
 
     plot_loss_functions(model, output_path)
 
-    torch.save(model.state_dict(), f"{output_path}/dc_gan_model.pth")
+    torch.save(model.state_dict(), f"{output_path}/adv_model.pth")
 
 
     #model.load_state_dict(torch.load('vGan_model.pth'))
@@ -117,42 +137,25 @@ def train_on_one_stocks(data_files, ticker, num_samples, sample_size, batch_size
 
     return
 
-def plot_loss_functions(model: DCGAN, output_path):
+def plot_loss_functions(model: AdversarialNetwork, output_path):
     # plot example fake data
-    plt.plot(model.d_loss_real, color='blue', label='Discriminator Loss (Real)')
-    plt.plot(model.d_loss_fake, color='orange', label='Discriminator Loss (Fake)')
-    plt.plot(model.g_loss, color='red', label='Generator Loss')
+    plt.plot(model.adversarial_losses, color='blue', label='Adversarial Loss')
+    plt.plot(model.similarity_losses, color='orange', label='Similarity Loss')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
-    plt.title('Loss Curve for D and G')
+    plt.title('Loss Curve for Adversarial and Similarity')
     plt.legend()
-    plt.savefig(f'{output_path}/loss_curve.png')
+    plt.savefig(f'{output_path}/component_loss_curve.png')
     plt.close()
 
-    plt.plot(model.final_w_dists, color='blue', label='W Dist Approximations')
+    plt.plot(model.final_losses, color='blue', label='Final Losses')
     plt.xlabel('Epoch')
-    plt.ylabel('W Dist')
-    plt.title('W Dist Approximations')
+    plt.ylabel('Loss')
+    plt.title('Final Loss Curve')
     plt.legend()
-    plt.savefig(f'{output_path}/w_dist.png')
+    plt.savefig(f'{output_path}/final_loss_curve.png')
     plt.close()
-
-
-def test_gan(model: DCGAN, noise_dim):
-
-    with torch.no_grad():
-        z = torch.randn(1, noise_dim, dtype=torch.float64).unsqueeze(-1)
-        fake_data = model.generator(z)
-
-    # plot example fake data
-    plt.plot(fake_data.squeeze(-1).squeeze(0).detach().numpy())
-    plt.xlabel('Time (days)')
-    plt.ylabel('Log Returns')
-    plt.title('Example log return created from GAN')
-    plt.savefig('./example_gan_output.png')
-    plt.close()
-
-    
+   
 
 
 
@@ -165,7 +168,7 @@ def maximum_mean_discrepency(X, Y, gamma=1):
     return xx.mean() + yy.mean() - 2 * xy.mean()
 
 
-def sample_stats(model: DCGAN, log_returns, num_to_sample, output_dir):
+def sample_stats(model: AdversarialNetwork, log_returns, num_to_sample, output_dir):
 
         # 1. Sample n intervals of 400 days and compute stats like kurtosis and skew
         real_means = []
@@ -204,7 +207,7 @@ def sample_stats(model: DCGAN, log_returns, num_to_sample, output_dir):
        
         model.eval()
         with torch.no_grad():
-            z = torch.randn(num_to_sample, model.sample_size, dtype=torch.float64, device=DEVICE).unsqueeze(-1)
+            z = torch.randn(num_to_sample, 50, dtype=torch.float64, device=DEVICE).unsqueeze(-1)
             fake_output = model.generator(z)
 
             # Need to scale back to log returns
@@ -294,27 +297,32 @@ if __name__ == '__main__':
     t1 = datetime.now()
     print(f"Started job at {t1}")
 
-    model = DCGAN.load_from_checkpoint(r"C:\Users\annal\WGan_A_50_simpler_119_2\best-model.ckpt")
-    dataset = SingleStockDataset(stock_folder="SP500_Filtered", ticker='A', num_samples=384, sample_size=119)
+    # model = DCGAN.load_from_checkpoint(r"C:\Users\annal\WGan_A_50_simpler\best-model.ckpt")
+    # dataset = SingleStockDataset(stock_folder="SP500_Filtered", ticker='A', num_samples=500, sample_size=50)
     
-    sample_stats(model, log_returns=dataset.unscaled_returns, num_to_sample=2000, output_dir='.')
+    # sample_stats(model, log_returns=dataset.unscaled_returns, num_to_sample=2000, output_dir='.')
 
     # output_path = '/scratch/a/alim/dominik/WGan_A_250epochs'
     # output_path = '/scratch/a/alim/dominik/WGan_A_50_simpler'
-    # output_path = '/scratch/a/alim/dominik/WGan_A_50_simpler_119_2'
-    # output_path = '/scratch/a/alim/dominik/WGan_A_50_simpler_119_fullgp'
+    # output_path = '/scratch/a/alim/dominik/WGan_A_50_simpler_350'
     # initialize_directory(output_path) 
 
-    # train_on_one_stocks(data_files="/home/a/alim/dominik/SP500_Filtered", ticker='A', num_samples=384, sample_size=119, batch_size=32, #32 for subsample
+    # train_on_one_stocks(data_files="/home/a/alim/dominik/SP500_Filtered", ticker='A', num_samples=384, sample_size=350, batch_size=32, #32 for subsample
     #       num_epochs=250, output_path=output_path, noise_dim=32,
     #       generator_hidden_dim=64, generator_output_dim=1, discriminator_hidden_dim=64)
 
-    # output_path = './WGan_A_500epochs_350'
-    # initialize_directory(output_path) 
+    output_path = './AdvGAN_A'
+    initialize_directory(output_path) 
 
-    # train_on_one_stocks(data_files="SP500_Filtered", ticker='A', num_samples=384, sample_size=350, batch_size=32, #32 for subsample
-    #       num_epochs=250, output_path=output_path, noise_dim=32,
-    #       generator_hidden_dim=64, generator_output_dim=1, discriminator_hidden_dim=64)
+    model_state_dict = torch.load("NHITS_forecasting_model.pt")
+    params = torch.load("./NHITS_params.pt", weights_only=False)
+    params["loss"] = pf.QuantileLoss(quantiles=[0.001, 0.01, 0.05, 0.5, 0.95, 0.99, 0.999])
+    model = pf.NHiTS(**params)
+    model.load_state_dict(model_state_dict)
+
+
+    train_on_one_stocks(data_files="SP500_Filtered", ticker='A', num_samples=384, sample_size=119, batch_size=32, #32 for subsample
+          num_epochs=500, output_path=output_path, model=model)
 
     t2 = datetime.now()
     print(f"Finished job at {t2} with job duration {t2 - t1}")

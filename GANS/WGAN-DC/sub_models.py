@@ -14,12 +14,12 @@ class Generator(nn.Module):
         #self.gru = nn.GRU(input_size=2, hidden_size=128, num_layers=4, batch_first=True)
 
         self.generator = nn.Sequential(
-            TCN_Block(input_dim=1, output_dim=128, kernel_size=3, dilation=1, padding=(3-1) * 1),
-            TCN_Block(input_dim=128, output_dim=256, kernel_size=5, dilation=2, padding=(5-1) * 2),
-            TCN_Block(input_dim=256, output_dim=128, kernel_size=5, dilation=4, padding=(5-1) * 4),
-            TCN_Block(input_dim=128, output_dim=64, kernel_size=3, dilation=8, padding=(3-1) * 8),
+            TCN_Block(input_dim=1, output_dim=64, kernel_size=3, dilation=1, padding=(3-1) * 1),
+            TCN_Block(input_dim=64, output_dim=128, kernel_size=5, dilation=2, padding=(5-1) * 2),
+            TCN_Block(input_dim=128, output_dim=64, kernel_size=5, dilation=4, padding=(5-1) * 4),
+            TCN_Block(input_dim=64, output_dim=32, kernel_size=3, dilation=8, padding=(3-1) * 8),
         )
-        self.output = nn.Linear(64, 1)
+        self.output = nn.Linear(32, 1)
 
         # self.generator = nn.Sequential(
         #     TCN_Block(input_dim=1, output_dim=64, kernel_size=3, dilation=1, padding=(3-1) * 1),
@@ -93,16 +93,16 @@ class Discriminator(nn.Module):
         #     nn.Linear(hidden_dim, output_dim)
         # )
 
-        self.tcn1 = TCN_Block(input_dim=1, output_dim=128, kernel_size=3, dilation=1, padding=(3-1) * 1)
-        self.gru1 = nn.GRU(input_size=128, hidden_size=256, num_layers=1, batch_first=True)
+        self.tcn1 = TCN_Block(input_dim=1, output_dim=64, kernel_size=3, dilation=1, padding=(3-1) * 1)
+        self.gru1 = nn.GRU(input_size=64, hidden_size=128, num_layers=1, batch_first=True)
         self.leaky = nn.LeakyReLU()
-        self.tcn2 = TCN_Block(input_dim=256, output_dim=256, kernel_size=5, dilation=2, padding=(5-1) * 2)
-        self.gru2 = nn.GRU(input_size=256, hidden_size=128, num_layers=1, batch_first=True)
-        self.tcn3 = TCN_Block(input_dim=128, output_dim=64, kernel_size=5, dilation=4, padding=(5-1) * 4)
+        self.tcn2 = TCN_Block(input_dim=128, output_dim=128, kernel_size=5, dilation=2, padding=(5-1) * 2)
+        self.gru2 = nn.GRU(input_size=128, hidden_size=64, num_layers=1, batch_first=True)
+        self.tcn3 = TCN_Block(input_dim=64, output_dim=32, kernel_size=5, dilation=4, padding=(5-1) * 4)
         self.mlp = nn.Sequential(
-            nn.Linear(128, 64),
+            nn.Linear(64, 32),
             nn.LeakyReLU(negative_slope=0.2),
-            nn.Linear(64, 1)
+            nn.Linear(32, 1)
         )
 
         # self.tcn1 = TCN_Block(input_dim=1, output_dim=64, kernel_size=3, dilation=1, padding=(3-1) * 1)
