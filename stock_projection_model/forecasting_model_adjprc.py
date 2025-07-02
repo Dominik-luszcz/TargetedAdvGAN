@@ -68,9 +68,9 @@ def set_up_dataset(feature_path:str, split_file: str):
         group_ids=["ticker"],
         target="adjprc",
         time_idx="time_idx",
-        max_encoder_length=300,
-        min_prediction_length=50,
-        max_prediction_length=50,
+        max_encoder_length=100,
+        min_prediction_length=20,
+        max_prediction_length=20,
         time_varying_known_categoricals=["adjprc_day"],
         time_varying_unknown_reals=["adjprc","rolling_mean5",
                                     "rolling_mean10","rolling_mean20",
@@ -84,9 +84,9 @@ def set_up_dataset(feature_path:str, split_file: str):
         group_ids=["ticker"],
         target="adjprc",
         time_idx="time_idx",
-        max_encoder_length=300,
-        min_prediction_length=50,
-        max_prediction_length=50,
+        max_encoder_length=100,
+        min_prediction_length=20,
+        max_prediction_length=20,
         time_varying_known_categoricals=["adjprc_day"],
         time_varying_unknown_reals=["adjprc","rolling_mean5",
                                     "rolling_mean10","rolling_mean20",
@@ -100,9 +100,9 @@ def set_up_dataset(feature_path:str, split_file: str):
         group_ids=["ticker"],
         target="adjprc",
         time_idx="time_idx",
-        max_encoder_length=300,
-        min_prediction_length=50,
-        max_prediction_length=50,
+        max_encoder_length=100,
+        min_prediction_length=20,
+        max_prediction_length=20,
         time_varying_known_categoricals=["adjprc_day"],
         time_varying_unknown_reals=["adjprc","rolling_mean5",
                                     "rolling_mean10","rolling_mean20",
@@ -301,13 +301,13 @@ if __name__ == '__main__':
     train_dataset.save("train_dataset.npy")
 
     # Set up the dataloaders
-    # train_loader = train_dataset.to_dataloader(train=True, batch_size=500, num_workers=19, persistent_workers=True)
-    # val_loader = val_dataset.to_dataloader(train=False, batch_size=500, num_workers=19, persistent_workers=True)
+    train_loader = train_dataset.to_dataloader(train=True, batch_size=500, num_workers=19, persistent_workers=True)
+    val_loader = val_dataset.to_dataloader(train=False, batch_size=500, num_workers=19, persistent_workers=True)
     test_loader = test_dataset.to_dataloader(train=False, batch_size=500, num_workers=19, persistent_workers=True)
 
 
     #Train the model
-    #train(train_dataset, train_loader, val_loader)
+    train(train_dataset, train_loader, val_loader)
 
     #Load the best model and test
     model_state_dict = torch.load("NHITS_forecasting_model.pt")

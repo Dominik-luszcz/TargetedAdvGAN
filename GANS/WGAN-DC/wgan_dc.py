@@ -133,18 +133,21 @@ class DCGAN(pl.LightningModule):
             discriminator_output_fake = self.discriminator(fake_data.detach())
             discriminator_output_fake = discriminator_output_fake.mean()
 
-            # Now we have to do the gradient penalty
-            gradient_penalty = self.compute_gradient_penalty(real_data=real_data, fake_data=fake_data)
-            # compute the loss
-            # goal is to maximize E[D(real)] - E[D(fake)], so instead we minimize E[D(fake)] - E[D(real)]
-            discriminator_loss = discriminator_output_fake - discriminator_output_real + gradient_penalty
+            # Now we have to do the gradient penalty only once per n_critic
+            if True:
+                gradient_penalty = self.compute_gradient_penalty(real_data=real_data, fake_data=fake_data)
+                g_pen += gradient_penalty.detach()
+                # compute the loss
+                # goal is to maximize E[D(real)] - E[D(fake)], so instead we minimize E[D(fake)] - E[D(real)]
+                discriminator_loss = discriminator_output_fake - discriminator_output_real + gradient_penalty
+            else:
+                discriminator_loss = discriminator_output_fake - discriminator_output_real
             discriminator_loss.backward()
             discriminator_optimizer.step()
 
             discrim_fake_loss += discriminator_output_fake.detach()
             discrim_real_loss += discriminator_output_real.detach()
             w_dist += (discriminator_output_fake.detach() - discriminator_output_real.detach())
-            g_pen += gradient_penalty.detach()
         
         print("Done Critic")
 
@@ -250,7 +253,7 @@ class DCGAN_Callback(pl.Callback):
        
         model.eval()
         with torch.no_grad():
-            z = torch.randn(num_to_sample, 50, dtype=torch.float64, device=DEVICE).unsqueeze(-1)
+            z = torch.randn(num_to_sample, model.sample_size, dtype=torch.float64, device=DEVICE).unsqueeze(-1)
             fake_output = model.generator(z)
 
             # Need to scale back to log returns
