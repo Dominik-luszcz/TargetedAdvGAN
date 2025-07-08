@@ -134,11 +134,15 @@ class DCGAN(pl.LightningModule):
             discriminator_output_fake = self.discriminator(condition, fake_data.detach())
             discriminator_output_fake = discriminator_output_fake.mean()
 
-            # Now we have to do the gradient penalty
-            gradient_penalty = self.compute_gradient_penalty(condition=condition, real_data=real_data, fake_data=fake_data)
-            # compute the loss
-            # goal is to maximize E[D(real)] - E[D(fake)], so instead we minimize E[D(fake)] - E[D(real)]
-            discriminator_loss = discriminator_output_fake - discriminator_output_real + gradient_penalty
+            # Now we have to do the gradient penalty only once per n_critic
+            if i < n_critic - 2:
+                gradient_penalty = self.compute_gradient_penalty(condition=condition, real_data=real_data, fake_data=fake_data)
+                g_pen += gradient_penalty.detach()
+                # compute the loss
+                # goal is to maximize E[D(real)] - E[D(fake)], so instead we minimize E[D(fake)] - E[D(real)]
+                discriminator_loss = discriminator_output_fake - discriminator_output_real + gradient_penalty
+            else:
+                discriminator_loss = discriminator_output_fake - discriminator_output_real
             discriminator_loss.backward()
             discriminator_optimizer.step()
 
@@ -177,8 +181,8 @@ class DCGAN(pl.LightningModule):
 
     
     def configure_optimizers(self):
-        generator_optimizer = torch.optim.Adam(self.generator.parameters(), lr=1e-05, betas=(self.beta1, self.beta2))
-        discriminator_optimizer = torch.optim.Adam(self.discriminator.parameters(), lr=1e-05, betas=(self.beta1, self.beta2))
+        generator_optimizer = torch.optim.Adam(self.generator.parameters(), lr=1e-04, betas=(self.beta1, self.beta2))
+        discriminator_optimizer = torch.optim.Adam(self.discriminator.parameters(), lr=1e-04, betas=(self.beta1, self.beta2))
 
         return generator_optimizer, discriminator_optimizer
     
@@ -209,7 +213,7 @@ class DCGAN_Callback(pl.Callback):
         
 
         # 1. Sample n intervals of 400 days and compute stats like kurtosis and skew
-        num_to_sample = 32
+        num_to_sample = 64
         real_means = []
         real_stdevs = []
         real_iqr = []
