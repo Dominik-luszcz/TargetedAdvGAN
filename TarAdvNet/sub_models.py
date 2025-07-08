@@ -10,9 +10,6 @@ class Generator(nn.Module):
         self.output_dim = output_dim
         self.sample_size = sample_size
 
-
-        #self.gru = nn.GRU(input_size=2, hidden_size=128, num_layers=4, batch_first=True)
-
         self.generator = nn.Sequential(
             TCN_Block(input_dim=2, output_dim=64, kernel_size=3, dilation=1, padding=(3-1) * 1),
             TCN_Block(input_dim=64, output_dim=128, kernel_size=5, dilation=2, padding=(5-1) * 2),
@@ -20,30 +17,6 @@ class Generator(nn.Module):
             TCN_Block(input_dim=64, output_dim=32, kernel_size=3, dilation=8, padding=(3-1) * 8),
         )
         self.output = nn.Linear(32, 1)
-
-        #self.output = nn.Linear(128, 1)
-
-
-        # self.generator = nn.Sequential(
-        #     nn.ConvTranspose1d(in_channels=1, out_channels=128, kernel_size=5, stride=2), # 4 for full recording (2, 2, 2) for random 500 sample
-        #     nn.BatchNorm1d(128),
-        #     nn.LeakyReLU(negative_slope=0.2),
-        #     nn.Dropout(0.25),
-
-        #     nn.ConvTranspose1d(in_channels=128, out_channels=256, kernel_size=5, stride=2), # 3
-        #     nn.BatchNorm1d(256),
-        #     nn.LeakyReLU(negative_slope=0.2),
-        #     nn.Dropout(0.25),
-
-        #     nn.ConvTranspose1d(in_channels=256, out_channels=128, kernel_size=5, stride=2), # 4
-        #     nn.BatchNorm1d(128),
-        #     nn.LeakyReLU(negative_slope=0.2),
-        #     nn.Dropout(0.25),
-
-        #     nn.Conv1d(in_channels=128, out_channels=self.output_dim, kernel_size=5, stride=1, padding=5//2),
-        #     nn.Tanh() # force returns between -1 and 1, then after multiply by epsilon to ensure its reasonable (between -0.2 and 0.2)
-        # )
-
 
         self.double()
 
@@ -69,7 +42,6 @@ class Discriminator(nn.Module):
         self.gru2 = nn.GRU(input_size=128, hidden_size=64, num_layers=1, batch_first=True)
         self.tcn3 = TCN_Block(input_dim=64, output_dim=64, kernel_size=5, dilation=4, padding=(5-1) * 4)
         self.output = nn.Linear(64, 1)
-
 
         self.double()
 
