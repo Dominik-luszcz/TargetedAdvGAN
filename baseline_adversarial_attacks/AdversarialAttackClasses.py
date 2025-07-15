@@ -15,11 +15,13 @@ from torch.utils.data import DataLoader
 import os
 
 class AdversarialAttack(ABC):
-    def __init__(self, projection_model, epsilon = 0.5):
+    def __init__(self, projection_model, epsilon = 0.5, lookback_length = 100, forecast_length = 20):
         super().__init__()
 
         self.projection_model = projection_model
         self.epsilon = epsilon
+        self.lookback_length = lookback_length
+        self.forecast_length = forecast_length
 
     @abstractmethod
     def attack(self, recording: pd.DataFrame):
@@ -151,15 +153,15 @@ class AdversarialAttack(ABC):
         encoder_targets = []
         decoder_targets = []
 
-        for i in range(0, len(features) - 300 - 49): # need to make room for prediction values
-            encoder_batches.append(features[i:i+300, :])
-            encoder_categorical_batches.append(days[i:i+300])
-            encoder_targets.append(x_prime[i:i+300])
+        for i in range(0, len(features) - self.lookback_length - self.forecast_length + 1): # need to make room for prediction values
+            encoder_batches.append(features[i:i+self.lookback_length, :])
+            encoder_categorical_batches.append(days[i:i+self.lookback_length])
+            encoder_targets.append(x_prime[i:i+self.lookback_length])
 
-            decoder_batches.append(features[i+300:i+300+50, :])
-            decoder_categorical_batches.append(days[i+300 : i+300+50])
-            decoder_targets.append(x_prime[i+300:i+350])
-            time_idx.append(torch.arange(i+300, i+350))
+            decoder_batches.append(features[i+self.lookback_length:i+self.lookback_length+self.forecast_length, :])
+            decoder_categorical_batches.append(days[i+self.lookback_length : i+self.lookback_length+self.forecast_length])
+            decoder_targets.append(x_prime[i+self.lookback_length:i + self.lookback_length + self.forecast_length])
+            time_idx.append(torch.arange(i+self.lookback_length, i + self.lookback_length + self.forecast_length))
 
 
         encoder_batches = torch.stack(encoder_batches)
@@ -178,12 +180,12 @@ class AdversarialAttack(ABC):
         payload = {
             'encoder_cat': encoder_categorical_batches, # this should be the categorical features from the lookback period
             'encoder_cont': encoder_batches, # this should be the continous features from the lookback period
-            'encoder_lengths': torch.tensor([300]), # should be length of lookback period
+            'encoder_lengths': torch.tensor([self.lookback_length]), # should be length of lookback period
             'encoder_target': encoder_targets, # should be the target variable of teh lookback period (adjprc)
-            'decoder_cat': decoder_categorical_batches, # should be the categorical features of the next 50 features
-            'decoder_cont': decoder_batches, # should be the continous features of the next 50 features
-            'decoder_lengths': torch.tensor([50]), # should be the length of the prediction
-            'decoder_target': decoder_targets, # should be the ground truths for the next 50 adjprc
+            'decoder_cat': decoder_categorical_batches, # should be the categorical features of the next self.forecast_length features
+            'decoder_cont': decoder_batches, # should be the continous features of the next self.forecast_length features
+            'decoder_lengths': torch.tensor([self.forecast_length]), # should be the length of the prediction
+            'decoder_target': decoder_targets, # should be the ground truths for the next self.forecast_length adjprc
             'target_scale': torch.tensor([center_, scale_]).unsqueeze(0), # should be the center and scale of the robust scalar
             'decoder_time_idx': torch.stack(time_idx)
 
@@ -191,12 +193,12 @@ class AdversarialAttack(ABC):
 
         '''
         output[0] = tensor of shape [2, 50, 7] # 7 because we have 7 quantiles, so 2 batches, 50 forward proj, 7 quantiles, quantile 0.5 is the prediction so it would be index 3 for the prediction
-        output[1] = tensor of shape [2, 300, 1] # 2 batches, 300 for the lookback
+        output[1] = tensor of shape [2, self.lookback_length, 1] # 2 batches, self.lookback_length for the lookback
         output[2] = tuple of length 4: 
-            output[2][0]: tensor of shape [2, 300, 1] # forecasts
-            output[2][1]: tensor of shape [2, 300, 1]
-            output[2][2]: tensor of shape [2, 300, 1]
-            output[2][3]: tensor of shape [2, 300, 1]
+            output[2][0]: tensor of shape [2, self.lookback_length, 1] # forecasts
+            output[2][1]: tensor of shape [2, self.lookback_length, 1]
+            output[2][2]: tensor of shape [2, self.lookback_length, 1]
+            output[2][3]: tensor of shape [2, self.lookback_length, 1]
         output[3] = tuple of length 4:
             output[3][0]: tensor of shape [2, 50, 7] # backcasts
             output[3][1]: tensor of shape [2, 50, 7]
@@ -220,8 +222,8 @@ class AdversarialAttack(ABC):
     
     def get_predictions(self, outputs, time_idx):
         predictions = outputs[0][:, :, 3].flatten()
-        time_idx = time_idx - 300
-        max_time = max(time_idx) + 1 # -300 so we start at 0
+        time_idx = time_idx - self.lookback_length
+        max_time = max(time_idx) + 1 # -self.lookback_length so we start at 0
         bin_sums = torch.zeros(max_time).scatter_add(dim=0, index=time_idx, src=predictions)
         bin_counts = torch.zeros(max_time).scatter_add(dim=0, index=time_idx, src=torch.ones_like(predictions))
         final_predictions = bin_sums / bin_counts
@@ -250,13 +252,13 @@ class BasicIterativeMethod(AdversarialAttack):
 
             predictions = output[0][:, :, 3].flatten()
 
-            time_idx = time_idx - 300
-            max_time = max(time_idx) + 1 # -300 so we start at 0
+            time_idx = time_idx - self.lookback_length
+            max_time = max(time_idx) + 1 # -self.lookback_length so we start at 0
             bin_sums = torch.zeros(max_time).scatter_add(dim=0, index=time_idx, src=predictions)
             bin_counts = torch.zeros(max_time).scatter_add(dim=0, index=time_idx, src=torch.ones_like(predictions))
 
             predictions = bin_sums / bin_counts
-            loss = nn.functional.l1_loss(predictions, adjprc[300:])
+            loss = nn.functional.l1_loss(predictions, adjprc[self.lookback_length:])
             loss = loss.float()
 
 
@@ -281,11 +283,11 @@ class BasicIterativeMethod(AdversarialAttack):
         normal_outputs, normal_time_idx = self.call_model(normal_adjprc, days)
         normal_predictions = self.get_predictions(normal_outputs, normal_time_idx)
         
-        normal_time_idx += 300
-        attack_time_idx += 300
+        normal_time_idx += self.lookback_length
+        attack_time_idx += self.lookback_length
 
-        mae = round(mean_absolute_error(adjprc[300:].detach().numpy(), normal_predictions.detach().numpy()), 3)
-        mae_attack = round(mean_absolute_error(adjprc[300:].detach().numpy(), attack_predictions.detach().numpy()), 3)
+        mae = round(mean_absolute_error(adjprc[self.lookback_length:].detach().numpy(), normal_predictions.detach().numpy()), 3)
+        mae_attack = round(mean_absolute_error(adjprc[self.lookback_length:].detach().numpy(), attack_predictions.detach().numpy()), 3)
 
         return (mae, normal_predictions), x_i,  (mae_attack, attack_predictions)
     
@@ -319,13 +321,13 @@ class MI_FGSM(AdversarialAttack):
 
             predictions = output[0][:, :, 3].flatten()
 
-            time_idx = time_idx - 300
-            max_time = max(time_idx) + 1 # -300 so we start at 0
+            time_idx = time_idx - self.lookback_length
+            max_time = max(time_idx) + 1 # -self.lookback_length so we start at 0
             bin_sums = torch.zeros(max_time).scatter_add(dim=0, index=time_idx, src=predictions)
             bin_counts = torch.zeros(max_time).scatter_add(dim=0, index=time_idx, src=torch.ones_like(predictions))
 
             predictions = bin_sums / bin_counts
-            loss = nn.functional.l1_loss(predictions, adjprc[300:])
+            loss = nn.functional.l1_loss(predictions, adjprc[self.lookback_length:])
             loss = loss.float()
             loss.backward()
 
@@ -350,11 +352,11 @@ class MI_FGSM(AdversarialAttack):
         normal_outputs, normal_time_idx = self.call_model(normal_adjprc, days)
         normal_predictions = self.get_predictions(normal_outputs, normal_time_idx)
         
-        normal_time_idx += 300
-        attack_time_idx += 300
+        normal_time_idx += self.lookback_length
+        attack_time_idx += self.lookback_length
 
-        mae = round(mean_absolute_error(adjprc[300:].detach().numpy(), normal_predictions.detach().numpy()), 3)
-        mae_attack = round(mean_absolute_error(adjprc[300:].detach().numpy(), attack_predictions.detach().numpy()), 3)
+        mae = round(mean_absolute_error(adjprc[self.lookback_length:].detach().numpy(), normal_predictions.detach().numpy()), 3)
+        mae_attack = round(mean_absolute_error(adjprc[self.lookback_length:].detach().numpy(), attack_predictions.detach().numpy()), 3)
 
         return (mae, normal_predictions), x_i, (mae_attack, attack_predictions)
     
@@ -386,13 +388,13 @@ class StealthyIterativeMethod(AdversarialAttack):
 
             predictions = output[0][:, :, 3].flatten()
 
-            time_idx = time_idx - 300
-            max_time = max(time_idx) + 1 # -300 so we start at 0
+            time_idx = time_idx - self.lookback_length
+            max_time = max(time_idx) + 1 # -self.lookback_length so we start at 0
             bin_sums = torch.zeros(max_time).scatter_add(dim=0, index=time_idx, src=predictions)
             bin_counts = torch.zeros(max_time).scatter_add(dim=0, index=time_idx, src=torch.ones_like(predictions))
 
             predictions = bin_sums / bin_counts
-            loss = nn.functional.l1_loss(predictions, adjprc[300:])
+            loss = nn.functional.l1_loss(predictions, adjprc[self.lookback_length:])
             loss = loss.float()
 
 
@@ -434,11 +436,11 @@ class StealthyIterativeMethod(AdversarialAttack):
         normal_outputs, normal_time_idx = self.call_model(normal_adjprc, days)
         normal_predictions = self.get_predictions(normal_outputs, normal_time_idx)
         
-        normal_time_idx += 300
-        attack_time_idx += 300
+        normal_time_idx += self.lookback_length
+        attack_time_idx += self.lookback_length
 
-        mae = round(mean_absolute_error(adjprc[300:].detach().numpy(), normal_predictions.detach().numpy()), 3)
-        mae_attack = round(mean_absolute_error(adjprc[300:].detach().numpy(), attack_predictions.detach().numpy()), 3)
+        mae = round(mean_absolute_error(adjprc[self.lookback_length:].detach().numpy(), normal_predictions.detach().numpy()), 3)
+        mae_attack = round(mean_absolute_error(adjprc[self.lookback_length:].detach().numpy(), attack_predictions.detach().numpy()), 3)
 
         return (mae, normal_predictions), x_i, (mae_attack, attack_predictions)
 
@@ -464,7 +466,7 @@ class TargetedIterativeMethod(AdversarialAttack):
         adjprc = adjprc.float()
         days = self.get_days(recording)
 
-        target = adjprc[300:] + self.direction * self.margin
+        target = adjprc[self.lookback_length:] + self.direction * self.margin
 
         x_i = adjprc
         for i in range(self.iterations):
@@ -475,8 +477,8 @@ class TargetedIterativeMethod(AdversarialAttack):
 
             predictions = output[0][:, :, 3].flatten()
 
-            time_idx = time_idx - 300
-            max_time = max(time_idx) + 1 # -300 so we start at 0
+            time_idx = time_idx - self.lookback_length
+            max_time = max(time_idx) + 1 # -self.lookback_length so we start at 0
             bin_sums = torch.zeros(max_time).scatter_add(dim=0, index=time_idx, src=predictions)
             bin_counts = torch.zeros(max_time).scatter_add(dim=0, index=time_idx, src=torch.ones_like(predictions))
 
@@ -520,16 +522,87 @@ class TargetedIterativeMethod(AdversarialAttack):
         normal_outputs, normal_time_idx = self.call_model(normal_adjprc, days)
         normal_predictions = self.get_predictions(normal_outputs, normal_time_idx)
         
-        normal_time_idx += 300
-        attack_time_idx += 300
+        normal_time_idx += self.lookback_length
+        attack_time_idx += self.lookback_length
 
-        mae = round(mean_absolute_error(adjprc[300:].detach().numpy(), normal_predictions.detach().numpy()), 3)
-        mae_attack = round(mean_absolute_error(adjprc[300:].detach().numpy(), attack_predictions.detach().numpy()), 3)
+        mae = round(mean_absolute_error(adjprc[self.lookback_length:].detach().numpy(), normal_predictions.detach().numpy()), 3)
+        mae_attack = round(mean_absolute_error(adjprc[self.lookback_length:].detach().numpy(), attack_predictions.detach().numpy()), 3)
 
         return (mae, normal_predictions), x_i, (mae_attack, attack_predictions)
         
 
+class Slope_Attack(AdversarialAttack):
+    def __init__(self, projection_model, iterations, epsilon=0.5, target_direction = 1, c=5, d=2):
+        super().__init__(projection_model, epsilon)
+        self.target_direction = target_direction
+        self.iterations = iterations
+        self.alpha = 1.5 * epsilon/iterations
+        self.c = c
+        self.d = d
 
+    def attack(self, recording):
+        adjprc = torch.from_numpy(recording["adjprc"].to_numpy())
+        adjprc = adjprc.float()
+        days = self.get_days(recording)
+
+        x_i = adjprc.clone()
+        for i in range(self.iterations):
+            x_i = x_i.requires_grad_()
+            x_i = x_i.float()
+            self.projection_model.zero_grad()
+
+            output, time_idx = self.call_model(x_i, days)
+
+            predictions = output[0][:, :, 3].flatten()
+
+            time_idx = time_idx - self.lookback_length
+            max_time = max(time_idx) + 1 # -self.lookback_length so we start at 0
+            bin_sums = torch.zeros(max_time).scatter_add(dim=0, index=time_idx, src=predictions)
+            bin_counts = torch.zeros(max_time).scatter_add(dim=0, index=time_idx, src=torch.ones_like(predictions))
+            predictions = bin_sums / bin_counts
+
+            slope = (predictions[-1] - predictions[0]) / len(predictions)
+            if self.target_direction != 0:
+                target_direction = self.target_direction * -1
+                loss = self.c * torch.exp(target_direction * self.d * slope)
+            else:
+                loss = self.c * (slope ** 2)
+
+            loss = loss.float()
+
+            loss.backward()
+
+            with torch.no_grad():
+                grad = x_i.grad.data
+
+                sign_grad = grad.sign()
+
+                noise = self.alpha * sign_grad
+
+                attack_x_i = x_i - noise
+
+                attack_x_i = torch.clamp(attack_x_i, adjprc - self.epsilon, adjprc + self.epsilon)
+
+                x_i = attack_x_i
+            x_i.detach()
+
+        # Now send the model the attack adjprc
+        attack_outputs, attack_time_idx = self.call_model(adjprc=x_i, days=days)
+        attack_predictions = self.get_predictions(attack_outputs, attack_time_idx)
+
+        normal_adjprc = adjprc.float()
+        normal_outputs, normal_time_idx = self.call_model(normal_adjprc, days)
+        normal_predictions = self.get_predictions(normal_outputs, normal_time_idx)
+        
+        normal_time_idx += self.lookback_length
+        attack_time_idx += self.lookback_length
+
+        mae = round(mean_absolute_error(adjprc[self.lookback_length:].detach().numpy(), normal_predictions.detach().numpy()), 3)
+        mae_attack = round(mean_absolute_error(adjprc[self.lookback_length:].detach().numpy(), attack_predictions.detach().numpy()), 3)
+
+        return (mae, normal_predictions), x_i, (mae_attack, attack_predictions)
+
+                
 class CW_Attack(AdversarialAttack):
     def __init__(self, projection_model, iterations, c, direction, size_penalty, epsilon=0.5):
         super().__init__(projection_model, epsilon)
@@ -545,9 +618,9 @@ class CW_Attack(AdversarialAttack):
         days = self.get_days(recording)
 
         if self.direction == -1:
-            target = adjprc[300:] * 0
+            target = adjprc[self.lookback_length:] * 0
         if self.direction == 1:
-            target = adjprc[300:] * 100
+            target = adjprc[self.lookback_length:] * 100
 
         noise = torch.zeros_like(adjprc, requires_grad=True)
 
@@ -590,10 +663,22 @@ class CW_Attack(AdversarialAttack):
         normal_outputs, normal_time_idx = self.call_model(normal_adjprc, days)
         normal_predictions = self.get_predictions(normal_outputs, normal_time_idx)
         
-        normal_time_idx += 300
-        attack_time_idx += 300
+        normal_time_idx += self.lookback_length
+        attack_time_idx += self.lookback_length
 
-        mae = round(mean_absolute_error(adjprc[300:].detach().numpy(), normal_predictions.detach().numpy()), 3)
-        mae_attack = round(mean_absolute_error(adjprc[300:].detach().numpy(), attack_predictions.detach().numpy()), 3)
+        mae = round(mean_absolute_error(adjprc[self.lookback_length:].detach().numpy(), normal_predictions.detach().numpy()), 3)
+        mae_attack = round(mean_absolute_error(adjprc[self.lookback_length:].detach().numpy(), attack_predictions.detach().numpy()), 3)
 
         return (mae, normal_predictions), x_i, (mae_attack, attack_predictions)
+    
+class ZOO_Attack(AdversarialAttack):
+    def __init__(self, projection_model, epsilon=0.5, lookback_length=100, forecast_length=20):
+        super().__init__(projection_model, epsilon, lookback_length, forecast_length)
+
+        for p in projection_model.parameters():
+            p.requires_grad = False # black box attack
+
+    def attack(self, recording):
+        return super().attack(recording)
+
+

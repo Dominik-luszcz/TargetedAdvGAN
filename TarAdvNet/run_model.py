@@ -94,15 +94,18 @@ class SingleStockDataset(Dataset):
         }
 
 
-def train_on_one_stocks(data_files, ticker, num_samples, sample_size, batch_size, num_epochs, output_path, model):
+def train_on_one_stocks(data_files, ticker, num_samples, sample_size, batch_size, num_epochs, output_path, model, load_model_path: None):
 
     dataset = SingleStockDataset(stock_folder=data_files, ticker=ticker, num_samples=num_samples, sample_size=sample_size)
 
     dataloader = DataLoader(dataset, batch_size=batch_size)#, num_workers=19)
 
-    model = AdversarialNetwork(sample_size=sample_size, time_series_metrics=dataset.time_series_metrics, 
+    model = AdversarialNetwork(sample_size=sample_size,
                                model = model, alpha=1, scale_max=dataset.max_return, scale_min=dataset.min_return,
                                plot_paths=output_path)
+    
+    if load_model_path != None:
+        model.load_state_dict(torch.load(load_model_path, map_location=DEVICE))
     
     train_callback = ModelCheckpoint(
             monitor="loss",
@@ -112,6 +115,13 @@ def train_on_one_stocks(data_files, ticker, num_samples, sample_size, batch_size
             verbose=True,
             dirpath=output_path
     )
+
+    model.epoch_betas = [20, 50, 80, 110, 130, 140]
+    model.beta = 0.5
+    model.beta_scale = 1.25
+    model.alpha = 1
+    model.c = 5 
+    model.d = 2
     # Init the trainer
     trainer = pl.Trainer(devices='auto', accelerator='auto', accumulate_grad_batches=1, logger=False, callbacks=[train_callback, DCGAN_Callback(dataset.unscaled_returns, dataset.log_returns, dataset.days, dataset.training_stock, num_to_sample=64)], 
                          num_sanity_val_steps=0, enable_checkpointing=True, max_epochs=num_epochs,#max_steps=MAX_ITERATIONS,
@@ -351,7 +361,7 @@ if __name__ == '__main__':
     # train_on_one_stocks(data_files="/home/a/alim/dominik/SP500_Filtered", ticker='A', num_samples=384, sample_size=99, batch_size=32, #32 for subsample
     #       num_epochs=500, output_path=output_path, model=model)
 
-    output_path = './AdvGAN_A_3'
+    output_path = './AdvGAN_A_15'
     initialize_directory(output_path) 
 
     model_state_dict = torch.load("NHITS_forecasting_model.pt")
@@ -363,7 +373,7 @@ if __name__ == '__main__':
 
 
     train_on_one_stocks(data_files="SP500_Filtered", ticker='A', num_samples=384, sample_size=99, batch_size=32, #32 for subsample
-          num_epochs=250, output_path=output_path, model=model)
+          num_epochs=150, output_path=output_path, model=model, load_model_path=r"C:\Users\annal\TarAdvGAN_v3\TargetedAdvGAN\AdvGAN_A_5\mapping_gan.pt")
 
     t2 = datetime.now()
     print(f"Finished job at {t2} with job duration {t2 - t1}")

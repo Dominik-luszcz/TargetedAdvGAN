@@ -9,3 +9,4 @@ checkpoints/*
 *.txt
 train_dataset.npy
 *.npy
+mapping_gan.pt
