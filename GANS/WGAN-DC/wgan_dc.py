@@ -134,7 +134,7 @@ class DCGAN(pl.LightningModule):
             discriminator_output_fake = discriminator_output_fake.mean()
 
             # Now we have to do the gradient penalty only once per n_critic
-            if True:
+            if i < n_critic - 2:
                 gradient_penalty = self.compute_gradient_penalty(real_data=real_data, fake_data=fake_data)
                 g_pen += gradient_penalty.detach()
                 # compute the loss
@@ -211,7 +211,7 @@ class DCGAN_Callback(pl.Callback):
         
 
         # 1. Sample n intervals of 400 days and compute stats like kurtosis and skew
-        num_to_sample = 32
+        num_to_sample = 64
         real_means = []
         real_stdevs = []
         real_iqr = []

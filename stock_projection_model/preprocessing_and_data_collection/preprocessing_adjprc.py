@@ -120,7 +120,7 @@ def preprocess(data_path: str, output_path: str):
                 continue
 
 
-            features = feature_generation(adjprc)
+            features, center_, scale_ = feature_generation(adjprc)
 
             columns = ["adjprc", "rolling_mean5", "rolling_mean10", "rolling_mean20", 
                              "rolling_stdev5", "rolling_stdev10", "rolling_stdev20", 
