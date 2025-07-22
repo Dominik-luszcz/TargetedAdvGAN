@@ -47,7 +47,7 @@ def plot(df: pd.DataFrame, title: str, to_plot: list, output_file: str = '.',
 
     # first lets plot the adjprc and the attack adjprc
     plt.figure(figsize=(16, 6))
-    colours = ["black", "blue", "green", "red", "brown", "orange", "purple", "cyan", "magenta", "pink", "grey"]
+    colours = ["black", "blue", "green", "red", "cyan", "magenta", "pink", "grey", "brown", "orange", "purple",]
     i = 0
     for prc in to_plot:
         if i == 0:
@@ -144,6 +144,15 @@ def perform_adversarial_attack(data_path, mode=0, output_path = '.'):
             slope = Slope_Attack(model, iterations=10, target_direction=0, c = 5, d = 2, epsilon=eps)
             slope_normal_0, slope_0_adjprc, slope_attack_0 = slope.attack(df)
 
+            ls_slope = LS_Slope_Attack(model, iterations=10, target_direction=1, c = 5, d = 2, epsilon=eps)
+            ls_slope_normal_up, ls_slope_up_adjprc, ls_slope_attack_up = ls_slope.attack(df)
+
+            ls_slope = LS_Slope_Attack(model, iterations=10, target_direction=-1, c = 5, d = 2, epsilon=eps)
+            ls_slope_normal_down, ls_slope_down_adjprc, ls_slope_attack_down = ls_slope.attack(df)
+
+            ls_slope = LS_Slope_Attack(model, iterations=10, target_direction=0, c = 5, d = 2, epsilon=eps)
+            ls_slope_normal_0, ls_slope_0_adjprc, ls_slope_attack_0 = ls_slope.attack(df)
+
             attack_df = pd.DataFrame()
             pred_padding = np.zeros((100, 1))
 
@@ -179,6 +188,16 @@ def perform_adversarial_attack(data_path, mode=0, output_path = '.'):
 
             attack_df["slope_0_adjprc"] = slope_0_adjprc.detach().numpy()
             attack_df["slope_0_pred"] = np.vstack((pred_padding, slope_attack_0[1].unsqueeze(-1).detach().numpy()))
+
+            attack_df["ls_slope_up_adjprc"] = ls_slope_up_adjprc.detach().numpy()
+            attack_df["ls_slope_up_pred"] = np.vstack((pred_padding, ls_slope_attack_up[1].unsqueeze(-1).detach().numpy()))
+
+            attack_df["ls_slope_down_adjprc"] = ls_slope_down_adjprc.detach().numpy()
+            attack_df["ls_slope_down_pred"] = np.vstack((pred_padding, ls_slope_attack_down[1].unsqueeze(-1).detach().numpy()))
+
+            attack_df["ls_slope_0_adjprc"] = ls_slope_0_adjprc.detach().numpy()
+            attack_df["ls_slope_0_pred"] = np.vstack((pred_padding, ls_slope_attack_0[1].unsqueeze(-1).detach().numpy()))
+            
 
 
             attack_df.to_csv(f"{output_path}/{entry.name.split(".csv")[0]}_attackdf.csv", index=False)
@@ -222,16 +241,16 @@ def plot_dataframes(data_path, output_dir):
                               "stealthy_adprc","tar_U_bim_adprc","tar_D_bim_adprc", "cw_adprc", "slope_up_adjprc", "slope_down_adjprc", "slope_0_adjprc"], 
                               output_file=f"{output_dir}/AttackAdjprc/{ticker}.png")
             
-            plot(df, title=f"Adjprc for different attacks on {ticker}", to_plot=["adjprc", "slope_up_adjprc", "slope_down_adjprc", "slope_0_adjprc"], 
-                              output_file=f"{output_dir}/Slope_Adjprc/{ticker}.png", labels=['Adjprc', 'Slope (Up)', 'Slope (Down)', 'Slope (0)'])
+            plot(df, title=f"Adjprc for different attacks on {ticker}", to_plot=["adjprc", "slope_up_adjprc", "slope_down_adjprc", "slope_0_adjprc", "ls_slope_up_adjprc", "ls_slope_down_adjprc", "ls_slope_0_adjprc"], 
+                              output_file=f"{output_dir}/Slope_Adjprc/{ticker}.png", labels=['Adjprc', 'Slope (Up)', 'Slope (Down)', 'Slope (0)', 'LS Slope (Up)', 'LS Slope (Down)', 'LS Slope (0)'])
             
             df = df[100:]
             plot(df, title=f"Predictions for different attacks on {ticker}", to_plot=["normal_pred","fgsm_pred","bim_pred","mi_fgsm_pred","stealthy_pred","tar_U_bim_pred",
                               "tar_D_bim_pred","cw_pred", "slope_up_pred", "slope_down_pred", "slope_0_pred"], 
                               output_file=f"{output_dir}/AttackPredictions/{ticker}.png")
             
-            plot(df, title=f"Predictions for slope attacks on {ticker}", to_plot=["normal_pred", "slope_up_pred", "slope_down_pred", "slope_0_pred"], 
-                              output_file=f"{output_dir}/Slope_Attacks/{ticker}.png", labels=['Normal Pred', 'Slope (Up)', 'Slope (Down)', 'Slope (0)'])
+            plot(df, title=f"Predictions for slope attacks on {ticker}", to_plot=["normal_pred", "slope_up_pred", "slope_down_pred", "slope_0_pred", "ls_slope_up_pred", "ls_slope_down_pred", "ls_slope_0_pred"], 
+                              output_file=f"{output_dir}/Slope_Attacks/{ticker}.png", labels=['Normal Pred', 'Slope (Up)', 'Slope (Down)', 'Slope (0)', 'LS Slope (Up)', 'LS Slope (Down)', 'LS Slope (0)'])
             
 
 
@@ -242,7 +261,7 @@ if __name__ == '__main__':
     print(f"Started job at {t1}")
 
     #perform_adversarial_attack("SP500_AttackData_Full", mode=0, output_path='Attack_Outputs/full_recording')
-    #perform_adversarial_attack("SP500_AttackData_Full", mode=1, output_path='Attack_Outputs/first400_4')
+    #perform_adversarial_attack("SP500_AttackData_Full", mode=1, output_path='Attack_Outputs/first400_6')
     #perform_adversarial_attack("SP500_AttackData_Full", mode=2, output_path='Attack_Outputs/final500')
 
     #plot_dataframes('Attack_Outputs/full_recording', 'Attack_Outputs/full_recording')
@@ -250,7 +269,7 @@ if __name__ == '__main__':
     #plot_dataframes('Attack_Outputs/final500', 'Attack_Outputs/final500')
 
 
-    plot_dataframes('Attack_Outputs/first400_4', 'Attack_Outputs/first400_4')
+    plot_dataframes('Attack_Outputs/first400_6', 'Attack_Outputs/first400_6')
 
     t2 = datetime.now()
     print(f"Finished job at {t2} with job duration {t2 - t1}")

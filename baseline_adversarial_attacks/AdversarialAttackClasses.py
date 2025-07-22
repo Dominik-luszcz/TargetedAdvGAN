@@ -601,6 +601,85 @@ class Slope_Attack(AdversarialAttack):
         mae_attack = round(mean_absolute_error(adjprc[self.lookback_length:].detach().numpy(), attack_predictions.detach().numpy()), 3)
 
         return (mae, normal_predictions), x_i, (mae_attack, attack_predictions)
+    
+
+class LS_Slope_Attack(AdversarialAttack):
+    def __init__(self, projection_model, iterations, epsilon=0.5, target_direction = 1, c=5, d=2):
+        super().__init__(projection_model, epsilon)
+        self.target_direction = target_direction
+        self.iterations = iterations
+        self.alpha = 1.5 * epsilon/iterations
+        self.c = c
+        self.d = d
+
+    def attack(self, recording):
+        adjprc = torch.from_numpy(recording["adjprc"].to_numpy())
+        adjprc = adjprc.float()
+        days = self.get_days(recording)
+
+        x_i = adjprc.clone()
+        for i in range(self.iterations):
+            x_i = x_i.requires_grad_()
+            x_i = x_i.float()
+            self.projection_model.zero_grad()
+
+            output, time_idx = self.call_model(x_i, days)
+
+            predictions = output[0][:, :, 3].flatten()
+
+            time_idx = time_idx - self.lookback_length
+            max_time = max(time_idx) + 1 # -self.lookback_length so we start at 0
+            bin_sums = torch.zeros(max_time).scatter_add(dim=0, index=time_idx, src=predictions)
+            bin_counts = torch.zeros(max_time).scatter_add(dim=0, index=time_idx, src=torch.ones_like(predictions))
+            predictions = bin_sums / bin_counts
+
+            x = torch.arange(len(predictions), dtype=torch.float32).expand(1, len(predictions))
+            x_mean = torch.mean(x).unsqueeze(-1)
+            y_mean = torch.mean(predictions).unsqueeze(-1)
+
+            numerator = ((x - x_mean) * (predictions - y_mean)).sum(dim=1)
+            denom = ((x - x_mean)**2).sum(dim=1)
+
+            slope = numerator / denom
+            if self.target_direction != 0:
+                target_direction = self.target_direction * -1
+                loss = self.c * torch.exp(target_direction * self.d * slope)
+            else:
+                loss = self.c * (slope ** 2)
+
+            loss = loss.float()
+
+            loss.backward()
+
+            with torch.no_grad():
+                grad = x_i.grad.data
+
+                sign_grad = grad.sign()
+
+                noise = self.alpha * sign_grad
+
+                attack_x_i = x_i - noise
+
+                attack_x_i = torch.clamp(attack_x_i, adjprc - self.epsilon, adjprc + self.epsilon)
+
+                x_i = attack_x_i
+            x_i.detach()
+
+        # Now send the model the attack adjprc
+        attack_outputs, attack_time_idx = self.call_model(adjprc=x_i, days=days)
+        attack_predictions = self.get_predictions(attack_outputs, attack_time_idx)
+
+        normal_adjprc = adjprc.float()
+        normal_outputs, normal_time_idx = self.call_model(normal_adjprc, days)
+        normal_predictions = self.get_predictions(normal_outputs, normal_time_idx)
+        
+        normal_time_idx += self.lookback_length
+        attack_time_idx += self.lookback_length
+
+        mae = round(mean_absolute_error(adjprc[self.lookback_length:].detach().numpy(), normal_predictions.detach().numpy()), 3)
+        mae_attack = round(mean_absolute_error(adjprc[self.lookback_length:].detach().numpy(), attack_predictions.detach().numpy()), 3)
+
+        return (mae, normal_predictions), x_i, (mae_attack, attack_predictions)
 
                 
 class CW_Attack(AdversarialAttack):
