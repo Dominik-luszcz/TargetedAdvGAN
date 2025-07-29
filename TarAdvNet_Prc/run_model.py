@@ -12,7 +12,7 @@ from pathlib import Path
 import random
 from sklearn.metrics.pairwise import rbf_kernel
 from scipy.stats import gaussian_kde
-import pytorch_forecasting as pf
+#import pytorch_forecasting as pf
 
 
 #from path_generation import compute_bond_SDE, compute_stock_SDE
@@ -94,14 +94,14 @@ class SingleStockDataset(Dataset):
         }
 
 
-def train_on_one_stocks(data_files, ticker, num_samples, sample_size, forecast_length, batch_size, num_epochs, output_path, model, load_model_path = None, test = False):
+def train_on_one_stocks(data_files, ticker, num_samples, sample_size, forecast_length, batch_size, num_epochs, output_path, nhits_model, load_model_path = None, test = False):
 
     dataset = SingleStockDataset(stock_folder=data_files, ticker=ticker, num_samples=num_samples, sample_size=sample_size, forecast_length=forecast_length)
 
     dataloader = DataLoader(dataset, batch_size=batch_size)#, num_workers=19)
 
     model = AdversarialNetwork(sample_size=sample_size, num_days=sample_size,
-                               model = model, alpha=1, scale_max=dataset.max_return, scale_min=dataset.min_return,
+                               model = nhits_model, alpha=1, scale_max=dataset.max_return, scale_min=dataset.min_return,
                                plot_paths=output_path)
     
     if load_model_path != None:
@@ -121,19 +121,19 @@ def train_on_one_stocks(data_files, ticker, num_samples, sample_size, forecast_l
     )
 
     model.epoch_betas = [60]
-    model.beta = 1 #e-01
+    model.beta = 0#.01 #e-01
     model.beta_scale = 10
     model.alpha = 1
-    model.c = 2
+    model.c = 5
     model.d = 2
     # Init the trainer
     trainer = pl.Trainer(devices='auto', accelerator='auto', accumulate_grad_batches=1, logger=False, callbacks=[train_callback, DCGAN_Callback(dataset.training_stock, dataset.scaled_adjprc, dataset.days, num_to_sample=64, forecast_length=20)], 
                          num_sanity_val_steps=0, enable_checkpointing=True, max_epochs=num_epochs,#max_steps=MAX_ITERATIONS,
-                        enable_progress_bar=True, max_time='00:10:00:00', default_root_dir=output_path)
+                        enable_progress_bar=True, max_time='00:20:00:00', default_root_dir=output_path)
     
     trainer.fit(model, dataloader)
 
-    torch.save(model.state_dict(), f"{output_path}/adv_model.pth")
+    #torch.save(model.state_dict(), f"{output_path}/adv_model.pth")
 
     plot_loss_functions(model, output_path)
 
@@ -141,10 +141,12 @@ def train_on_one_stocks(data_files, ticker, num_samples, sample_size, forecast_l
     #model.load_state_dict(torch.load('vGan_model.pth'))
     #test_datset = StockDataset(data_files, training_split_file=training_split_file, mode='test')
 
-    # best_model_path = trainer.checkpoint_callback.best_model_path
-    # print(best_model_path)
-    # best_model = VanillaGAN.load_from_checkpoint(best_model_path)
-    # torch.save(best_model.state_dict(), f"dc_gan.pt")
+    best_model_path = trainer.checkpoint_callback.best_model_path
+    print(best_model_path)
+    best_model = AdversarialNetwork.load_from_checkpoint(best_model_path)
+    torch.save(best_model.state_dict(), f"{output_path}/gan.pt")
+    torch.save(best_model.generator.state_dict(), f"{output_path}/generator.pt")
+    torch.save(best_model.discriminator.state_dict(), f"{output_path}/discriminator.pt")
 
     #test_gan(model, noise_dim)
 
@@ -475,19 +477,19 @@ if __name__ == '__main__':
     t1 = datetime.now()
     print(f"Started job at {t1}")
 
-    output_path = './AdvGAN_A_prc6_p3_27_test'
+    output_path = '/scratch/a/alim/dominik/GAN_A_adjprc_s100'
     initialize_directory(output_path) 
 
-    model_state_dict = torch.load("NHITS_forecasting_model.pt")
-    params = torch.load("./NHITS_params.pt", weights_only=False)
-    params["loss"] = pf.QuantileLoss(quantiles=[0.001, 0.01, 0.05, 0.5, 0.95, 0.99, 0.999])
-    model = pf.NHiTS(**params)
-    model.load_state_dict(model_state_dict)
-    model.eval()
+    # model_state_dict = torch.load("NHITS_forecasting_model.pt")
+    # params = torch.load("./NHITS_params.pt", weights_only=False)
+    # params["loss"] = pf.QuantileLoss(quantiles=[0.001, 0.01, 0.05, 0.5, 0.95, 0.99, 0.999])
+    # model = pf.NHiTS(**params)
+    # model.load_state_dict(model_state_dict)
+    # model.eval()
 
 
-    train_on_one_stocks(data_files="SP500_Filtered", ticker='A', num_samples=512, sample_size=300, batch_size=32, forecast_length=20,#32 for subsample
-          num_epochs=50, output_path=output_path, model=model, load_model_path= r'C:\Users\annal\TarAdvGAN_v3\TargetedAdvGAN\AdvGAN_A_prc6_p3_22\adv_model.pth', test=True)#load_model_path=r"C:\Users\annal\TarAdvGAN_v3\TargetedAdvGAN\AdvGAN_A_prc6_p2\adv_model.pth")
+    train_on_one_stocks(data_files="/home/a/alim/dominik/SP500_Filtered", ticker='A', num_samples=512, sample_size=100, batch_size=32, forecast_length=20,#32 for subsample
+          num_epochs=500, output_path=output_path, nhits_model=None, load_model_path="/scratch/a/alim/dominik/GAN_A_adjprc_s50/gan.pt")#, load_model_path= r'C:\Users\annal\TarAdvGAN_v3\TargetedAdvGAN\AdvGAN_A_prc6_p3_22\adv_model.pth', test=True)#load_model_path=r"C:\Users\annal\TarAdvGAN_v3\TargetedAdvGAN\AdvGAN_A_prc6_p2\adv_model.pth")
     
     #  load_model_path= r'C:\Users\annal\TarAdvGAN_v3\TargetedAdvGAN\AdvGAN_A_prc6_p3_22\adv_model.pth', test=True
 
