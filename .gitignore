@@ -10,3 +10,6 @@ checkpoints/*
 train_dataset.npy
 *.npy
 mapping_gan.pt
+AdversarialDiscriminatorOutputs/*
+Forecast_outputs2/*
+GAN_A_adjprc/*

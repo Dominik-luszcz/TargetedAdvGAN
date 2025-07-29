@@ -104,8 +104,8 @@ def train_on_one_stocks(data_files, ticker, num_samples, sample_size, batch_size
                                model = model, alpha=1, scale_max=dataset.max_return, scale_min=dataset.min_return,
                                plot_paths=output_path)
     
-    if load_model_path != None:
-        model.load_state_dict(torch.load(load_model_path, map_location=DEVICE))
+    # if load_model_path != None:
+    #     model.load_state_dict(torch.load(load_model_path, map_location=DEVICE))
     
     train_callback = ModelCheckpoint(
             monitor="loss",
@@ -116,8 +116,8 @@ def train_on_one_stocks(data_files, ticker, num_samples, sample_size, batch_size
             dirpath=output_path
     )
 
-    model.epoch_betas = [20, 50, 80, 110, 130, 140]
-    model.beta = 0.5
+    model.epoch_betas = [60]
+    model.beta = 2
     model.beta_scale = 1.25
     model.alpha = 1
     model.c = 5 
@@ -137,10 +137,10 @@ def train_on_one_stocks(data_files, ticker, num_samples, sample_size, batch_size
     #model.load_state_dict(torch.load('vGan_model.pth'))
     #test_datset = StockDataset(data_files, training_split_file=training_split_file, mode='test')
 
-    # best_model_path = trainer.checkpoint_callback.best_model_path
-    # print(best_model_path)
-    # best_model = VanillaGAN.load_from_checkpoint(best_model_path)
-    # torch.save(best_model.state_dict(), f"dc_gan.pt")
+    best_model_path = trainer.checkpoint_callback.best_model_path
+    print(best_model_path)
+    best_model = AdversarialNetwork.load_from_checkpoint(best_model_path)
+    torch.save(best_model.state_dict(), f"{output_path}/adversarial_network.pt")
 
     #test_gan(model, noise_dim)
 
@@ -361,7 +361,7 @@ if __name__ == '__main__':
     # train_on_one_stocks(data_files="/home/a/alim/dominik/SP500_Filtered", ticker='A', num_samples=384, sample_size=99, batch_size=32, #32 for subsample
     #       num_epochs=500, output_path=output_path, model=model)
 
-    output_path = './AdvGAN_A_15'
+    output_path = './AdvGAN_A_5_2c'
     initialize_directory(output_path) 
 
     model_state_dict = torch.load("NHITS_forecasting_model.pt")
@@ -372,8 +372,8 @@ if __name__ == '__main__':
     model.eval()
 
 
-    train_on_one_stocks(data_files="SP500_Filtered", ticker='A', num_samples=384, sample_size=99, batch_size=32, #32 for subsample
-          num_epochs=150, output_path=output_path, model=model, load_model_path=r"C:\Users\annal\TarAdvGAN_v3\TargetedAdvGAN\AdvGAN_A_5\mapping_gan.pt")
+    train_on_one_stocks(data_files="SP500_Filtered", ticker='A', num_samples=512, sample_size=99, batch_size=32, #32 for subsample
+          num_epochs=50, output_path=output_path, model=model, load_model_path=r"C:\Users\annal\TarAdvGAN_v3\TargetedAdvGAN\AdvGAN_A_5\mapping_gan.pt")
 
     t2 = datetime.now()
     print(f"Finished job at {t2} with job duration {t2 - t1}")

@@ -307,7 +307,7 @@ if __name__ == '__main__':
 
 
     #Train the model
-    train(train_dataset, train_loader, val_loader)
+    #train(train_dataset, train_loader, val_loader)
 
     #Load the best model and test
     model_state_dict = torch.load("NHITS_forecasting_model.pt")
@@ -323,7 +323,7 @@ if __name__ == '__main__':
 
     #test(model, train_loader, train_dataset, mode='train')
     #test_last_window(model, test_loader, test_dataset, mode='test')
-    test(model, test_loader, test_dataset, mode='test', output_path="Forecast_outputs")
+    test(model, test_loader, test_dataset, mode='test', output_path="Forecast_outputs2")
 
 
     # payload: (dictionary)

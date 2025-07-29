@@ -153,6 +153,16 @@ class AdversarialAttack(ABC):
         encoder_targets = []
         decoder_targets = []
 
+        # if len(features) - self.lookback_length - self.forecast_length + 1 < 0:
+        #     encoder_batches.append(features)
+        #     encoder_categorical_batches.append(days)
+        #     encoder_targets.append(x_prim)
+
+        #     decoder_batches.append(torch.zeros((self.forecast_length, features.shape[-1])))
+        #     decoder_categorical_batches.append(torch.zeros((self.forecast_length)))
+        #     decoder_targets.append(x_prime[i+self.lookback_length:i + self.lookback_length + self.forecast_length])
+        #     time_idx.append(torch.arange(i+self.lookback_length, i + self.lookback_length + self.forecast_length))
+
         for i in range(0, len(features) - self.lookback_length - self.forecast_length + 1): # need to make room for prediction values
             encoder_batches.append(features[i:i+self.lookback_length, :])
             encoder_categorical_batches.append(days[i:i+self.lookback_length])
@@ -602,6 +612,87 @@ class Slope_Attack(AdversarialAttack):
 
         return (mae, normal_predictions), x_i, (mae_attack, attack_predictions)
     
+class CW_BasicSlope_Attack(AdversarialAttack):
+    def __init__(self, projection_model, iterations, lr=0.01, epsilon=0.5, target_direction = 1, c=5, d=2, clamp=False):
+        super().__init__(projection_model, epsilon)
+        self.target_direction = target_direction
+        self.iterations = iterations
+        self.alpha = 1.5 * epsilon/iterations
+        self.c = c
+        self.d = d
+        self.lr = lr
+        self.clamp = clamp
+
+    def attack(self, recording):
+        adjprc = torch.from_numpy(recording["adjprc"].values)
+        adjprc = adjprc.float()
+        days = self.get_days(recording)
+
+
+        noise = torch.zeros_like(adjprc, requires_grad=True)
+
+        optimizer = torch.optim.Adam([noise], lr=self.lr)
+
+        best_loss = 100000
+        best_noise = 0
+
+        
+        for i in range(self.iterations):
+            # x_i = x_i.requires_grad_()
+            # x_i = x_i.float()
+            optimizer.zero_grad()
+            
+            if self.clamp:
+                clamped_noise = torch.clamp(noise, -self.epsilon, self.epsilon)
+                x_i = adjprc + clamped_noise
+            else:
+                x_i = adjprc + noise
+            output, time_idx = self.call_model(x_i, days)
+            predictions = output[0][:, :, 3].flatten()
+            #attack_predictions = self.get_predictions(attack_outputs, attack_time_idx)
+
+            
+            time_idx = time_idx - self.lookback_length
+            max_time = max(time_idx) + 1 # -self.lookback_length so we start at 0
+            bin_sums = torch.zeros(max_time).scatter_add(dim=0, index=time_idx, src=predictions)
+            bin_counts = torch.zeros(max_time).scatter_add(dim=0, index=time_idx, src=torch.ones_like(predictions))
+            predictions = bin_sums / bin_counts
+
+            slope = (predictions[-1] - predictions[0]) / len(predictions)
+            if self.target_direction != 0:
+                target_direction = self.target_direction * -1
+                loss = self.c * torch.exp(target_direction * self.d * slope) + torch.norm(adjprc - x_i, p=2)
+            else:
+                loss = self.c * (slope ** 2) + torch.norm(adjprc - x_i, p=2)
+            loss = loss.float()
+
+            if loss < best_loss:
+                best_loss = loss.detach()
+                best_noise = noise.detach()
+
+            loss.backward()
+            optimizer.step()
+
+            
+        #noise = torch.clamp(noise, -self.epsilon, self.epsilon)
+        x_i = adjprc + best_noise
+
+        # Now send the model the attack adjprc
+        attack_outputs, attack_time_idx = self.call_model(adjprc=x_i, days=days)
+        attack_predictions = self.get_predictions(attack_outputs, attack_time_idx)
+
+        normal_adjprc = adjprc.float()
+        normal_outputs, normal_time_idx = self.call_model(normal_adjprc, days)
+        normal_predictions = self.get_predictions(normal_outputs, normal_time_idx)
+        
+        normal_time_idx += self.lookback_length
+        attack_time_idx += self.lookback_length
+
+        mae = round(mean_absolute_error(adjprc[self.lookback_length:].detach().numpy(), normal_predictions.detach().numpy()), 3)
+        mae_attack = round(mean_absolute_error(adjprc[self.lookback_length:].detach().numpy(), attack_predictions.detach().numpy()), 3)
+
+        return (mae, normal_predictions), x_i, (mae_attack, attack_predictions)
+    
 
 class LS_Slope_Attack(AdversarialAttack):
     def __init__(self, projection_model, iterations, epsilon=0.5, target_direction = 1, c=5, d=2):
@@ -681,15 +772,105 @@ class LS_Slope_Attack(AdversarialAttack):
 
         return (mae, normal_predictions), x_i, (mae_attack, attack_predictions)
 
+
+class CW_LS_Attack(AdversarialAttack):
+    def __init__(self, projection_model, iterations, lr=0.1, epsilon=0.5, target_direction = 1, c=5, d=2, clamp = False):
+        super().__init__(projection_model, epsilon)
+        self.target_direction = target_direction
+        self.iterations = iterations
+        self.alpha = 1.5 * epsilon/iterations
+        self.c = c
+        self.d = d
+        self.lr = lr
+        self.clamp = clamp
+
+    def attack(self, recording):
+        adjprc = torch.from_numpy(recording["adjprc"].values)
+        adjprc = adjprc.float()
+        days = self.get_days(recording)
+
+
+        noise = torch.zeros_like(adjprc, requires_grad=True)
+
+        optimizer = torch.optim.Adam([noise], lr=self.lr)
+
+        best_loss = 100000
+        best_noise = 0
+
+        
+        for i in range(self.iterations):
+            # x_i = x_i.requires_grad_()
+            # x_i = x_i.float()
+            optimizer.zero_grad()
+            
+            if self.clamp:
+                clamped_noise = torch.clamp(noise, -self.epsilon, self.epsilon)
+                x_i = adjprc + clamped_noise
+            else:
+                x_i = adjprc + noise
+            output, time_idx = self.call_model(x_i, days)
+            predictions = output[0][:, :, 3].flatten()
+            #attack_predictions = self.get_predictions(attack_outputs, attack_time_idx)
+
+            
+            time_idx = time_idx - self.lookback_length
+            max_time = max(time_idx) + 1 # -self.lookback_length so we start at 0
+            bin_sums = torch.zeros(max_time).scatter_add(dim=0, index=time_idx, src=predictions)
+            bin_counts = torch.zeros(max_time).scatter_add(dim=0, index=time_idx, src=torch.ones_like(predictions))
+            predictions = bin_sums / bin_counts
+
+            x = torch.arange(len(predictions), dtype=torch.float32).expand(1, len(predictions))
+            x_mean = torch.mean(x).unsqueeze(-1)
+            y_mean = torch.mean(predictions).unsqueeze(-1)
+
+            numerator = ((x - x_mean) * (predictions - y_mean)).sum(dim=1)
+            denom = ((x - x_mean)**2).sum(dim=1)
+
+            slope = numerator / denom
+            if self.target_direction != 0:
+                target_direction = self.target_direction * -1
+                loss = self.c * torch.exp(target_direction * self.d * slope) + torch.norm(adjprc - x_i, p=2)
+            else:
+                loss = self.c * (slope ** 2) + + torch.norm(adjprc - x_i, p=2)
+            loss = loss.float()
+
+            if loss < best_loss:
+                best_loss = loss.detach()
+                best_noise = noise.detach()
+
+            loss.backward()
+            optimizer.step()
+
+            
+        #noise = torch.clamp(noise, -self.epsilon, self.epsilon)
+        x_i = adjprc + best_noise
+
+        # Now send the model the attack adjprc
+        attack_outputs, attack_time_idx = self.call_model(adjprc=x_i, days=days)
+        attack_predictions = self.get_predictions(attack_outputs, attack_time_idx)
+
+        normal_adjprc = adjprc.float()
+        normal_outputs, normal_time_idx = self.call_model(normal_adjprc, days)
+        normal_predictions = self.get_predictions(normal_outputs, normal_time_idx)
+        
+        normal_time_idx += self.lookback_length
+        attack_time_idx += self.lookback_length
+
+        mae = round(mean_absolute_error(adjprc[self.lookback_length:].detach().numpy(), normal_predictions.detach().numpy()), 3)
+        mae_attack = round(mean_absolute_error(adjprc[self.lookback_length:].detach().numpy(), attack_predictions.detach().numpy()), 3)
+
+        return (mae, normal_predictions), x_i, (mae_attack, attack_predictions)
                 
 class CW_Attack(AdversarialAttack):
-    def __init__(self, projection_model, iterations, c, direction, size_penalty, epsilon=0.5):
+    def __init__(self, projection_model, iterations, c, direction, size_penalty, lr=0.01, epsilon=0.5, clamp=False):
         super().__init__(projection_model, epsilon)
 
         self.c = c
         self.iterations = iterations
         self.direction = direction
         self.size_penalty = size_penalty
+        self.lr = lr
+        self.clamp = clamp
 
     def attack(self, recording):
         adjprc = torch.from_numpy(recording["adjprc"].values)
@@ -703,7 +884,7 @@ class CW_Attack(AdversarialAttack):
 
         noise = torch.zeros_like(adjprc, requires_grad=True)
 
-        optimizer = torch.optim.Adam([noise], lr=0.01)
+        optimizer = torch.optim.Adam([noise], lr=self.lr)
 
         best_loss = 100000
         best_noise = 0
@@ -714,13 +895,17 @@ class CW_Attack(AdversarialAttack):
             # x_i = x_i.float()
             optimizer.zero_grad()
             
-            clamped_noise = torch.clamp(noise, -self.epsilon, self.epsilon)
-            x_i = adjprc + clamped_noise
+            if self.clamp:
+                clamped_noise = torch.clamp(noise, -self.epsilon, self.epsilon)
+                x_i = adjprc + clamped_noise
+            else:
+                x_i = adjprc + noise
+
             attack_outputs, attack_time_idx = self.call_model(adjprc=x_i, days=days)
             attack_predictions = self.get_predictions(attack_outputs, attack_time_idx)
 
             
-            loss = self.c * nn.functional.l1_loss(attack_predictions, target) + self.size_penalty * torch.norm(noise, p=2)
+            loss = self.c * nn.functional.l1_loss(attack_predictions, target) + torch.norm(adjprc - x_i, p=2)
             loss = loss.float()
 
             if loss < best_loss:
@@ -750,14 +935,5 @@ class CW_Attack(AdversarialAttack):
 
         return (mae, normal_predictions), x_i, (mae_attack, attack_predictions)
     
-class ZOO_Attack(AdversarialAttack):
-    def __init__(self, projection_model, epsilon=0.5, lookback_length=100, forecast_length=20):
-        super().__init__(projection_model, epsilon, lookback_length, forecast_length)
-
-        for p in projection_model.parameters():
-            p.requires_grad = False # black box attack
-
-    def attack(self, recording):
-        return super().attack(recording)
 
 

@@ -15,7 +15,7 @@ import torch.autograd as autograd
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 class AdversarialNetwork(pl.LightningModule):
-    def __init__(self, sample_size, model, n_critic = 5, target_direction = 1, beta1 = 0.0, beta2=0.9,
+    def __init__(self, sample_size, model, n_critic = 5, target_direction = 1, beta1 = 0.0, beta2=0.9, lookback_length = 100, forecast_length=20, num_days=120,
                  alpha = 1, init_beta = 1e-05, epoch_betas = [30, 60, 100, 115, 140, 190, 235], beta_scale = 7.55, c = 5, d = 2, lmda = 1,
                  scale_max = None, scale_min = None, plot_paths = '.', black_box = False):
         super().__init__()
@@ -35,6 +35,9 @@ class AdversarialNetwork(pl.LightningModule):
         self.beta2 = beta2
         self.n_critic = n_critic
         self.lmda = lmda
+        self.lookback_length = lookback_length
+        self.forecast_length = forecast_length
+        self.num_days = num_days
 
         # Loss function hyperparams
         self.alpha = alpha
@@ -436,17 +439,27 @@ class AdversarialNetwork(pl.LightningModule):
         #fake_predictions = self.get_predictions(fake_outputs, time_idx)
 
         # 3. Compute the adversarial loss (targeted)
-        slope = (fake_outputs[:, -1] - fake_outputs[:, 0]) / 20
+        #slope = (fake_outputs[:, -1] - fake_outputs[:, 0]) / 20
         direction = self.target_direction * -1
-        adversarial_loss = torch.mean(-1 * self.c * torch.exp(direction * self.d * slope))
+        #adversarial_loss = torch.mean(-1 * self.c * torch.exp(direction * self.d * slope))
 
         #adversarial_loss = torch.nn.functional.l1_loss(fake_outputs, real_pred_adjprc)
-        
+        x = torch.arange(self.num_days - self.lookback_length, dtype=torch.float32).expand(b, self.num_days - self.lookback_length)
+        x_mean = torch.mean(x, dim=1).unsqueeze(-1)
+        y_mean = torch.mean(fake_outputs, dim=1).unsqueeze(-1)
+
+        numerator = ((x - x_mean) * (fake_outputs - y_mean)).sum(dim=1)
+        denom = ((x - x_mean)**2).sum(dim=1)
+
+        slope = numerator / denom
+
+        adversarial_loss = self.c * torch.exp(direction * self.d * slope)
+
         # Compute the final loss and return
         adversarial_loss = torch.mean(self.beta * adversarial_loss)
 
-        total_g_loss = generator_loss + mean_loss - adversarial_loss
-        total_g_loss.backward()
+        total_g_loss = generator_loss + mean_loss + adversarial_loss
+        
         generator_optimizer.step()
 
         self.step_adv_loss.append(adversarial_loss.detach())
@@ -679,15 +692,27 @@ class DCGAN_Callback(pl.Callback):
         #fake_predictions = self.get_predictions(fake_outputs, time_idx)
 
         # 3. Compute the adversarial loss
-        slope = (fake_outputs[:, -1] - fake_outputs[:, 0]) / 20
+        # slope = (fake_outputs[:, -1] - fake_outputs[:, 0]) / 20
         direction = model.target_direction * -1
-        adversarial_loss = torch.mean(-1 * model.c * torch.exp(direction * model.d * slope))
-        #a_loss = torch.nn.functional.l1_loss(fake_outputs, real_pred_adjprc)
+        # adversarial_loss = torch.mean(-1 * model.c * torch.exp(direction * model.d * slope))
+        # #a_loss = torch.nn.functional.l1_loss(fake_outputs, real_pred_adjprc)
         
-        # Compute the final loss and return
+        # # Compute the final loss and return
+        # a_loss = torch.mean(model.beta * adversarial_loss)
+
+        x = torch.arange(model.num_days - model.lookback_length, dtype=torch.float32).expand(num_to_sample, model.num_days - model.lookback_length)
+        x_mean = torch.mean(x, dim=1).unsqueeze(-1)
+        y_mean = torch.mean(fake_outputs, dim=1).unsqueeze(-1)
+
+        numerator = ((x - x_mean) * (fake_outputs - y_mean)).sum(dim=1)
+        denom = ((x - x_mean)**2).sum(dim=1)
+
+        slope = numerator / denom
+
+        adversarial_loss = model.c * torch.exp(direction * model.d * slope)
         a_loss = torch.mean(model.beta * adversarial_loss)
 
-        f_loss = s_loss - a_loss
+        f_loss = s_loss + a_loss
         # Compute the final loss and return
         #f_loss = s_loss + a_loss
 

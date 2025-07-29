@@ -49,12 +49,13 @@ class AdversarialNetwork(pl.LightningModule):
         self.c = c
         self.d = d
         self.num_days = num_days
-        self.forecast_length = model._hparams.prediction_length
-        self.lookback_length = model._hparams.context_length
+        if model is not None:
+            self.forecast_length = model._hparams.prediction_length
+            self.lookback_length = model._hparams.context_length
 
         # Models
-        self.generator = Generator(output_dim=1, sample_size=sample_size)
-        self.discriminator = Discriminator(input_dim=2, hidden_dim=64, output_dim=1)
+        self.generator = Generator(input_dim=1, output_dim=1, sample_size=sample_size)
+        self.discriminator = Discriminator(input_dim=1, hidden_dim=64, output_dim=1)
 
         # Logging
         self.step_adv_loss = []
@@ -78,15 +79,15 @@ class AdversarialNetwork(pl.LightningModule):
 
         self.automatic_optimization = False
 
-        #self.save_hyperparameters()
+        self.save_hyperparameters()
 
         # Set model to eval mode (no gradient updates)
-        object.__setattr__(self, 'model', model)
-        self.model.eval()
-        # If blackbox, then set grad to false for all nhits params
-        if self.black_box:
-            for param in self.model.parameters():
-                param.requires_grad = False
+        # object.__setattr__(self, 'model', model)
+        # self.model.eval()
+        # # If blackbox, then set grad to false for all nhits params
+        # if self.black_box:
+        #     for param in self.model.parameters():
+        #         param.requires_grad = False
 
 
     '''
@@ -385,7 +386,6 @@ class AdversarialNetwork(pl.LightningModule):
         else:
             n_critic = self.n_critic
         for i in range(n_critic):
-            break
             # First we need to train on the real data
             discriminator_output_real = self.discriminator(condition, real_data)
             # because we classify per ticker/recording we take the average to get size b x 1
@@ -434,86 +434,86 @@ class AdversarialNetwork(pl.LightningModule):
         self.generator_losses.append(generator_loss.detach())
         self.batch_sizes.append(b)
 
-        x_adv = []
-        days_generated = 0
-        k = 0
-        while days_generated < self.num_days:
-            z = torch.randn(b, real_data.shape[1], dtype=torch.float64, device=DEVICE).unsqueeze(-1)
-            if days_generated == 0:
-                c = condition
-            else:
-                c = x_adv[k-1]
-            fake_data = self.generator(c, z)
-            x_adv.append(fake_data)
-            days_generated = days_generated + fake_data.shape[1]
-            k = k + 1
+        # x_adv = []
+        # days_generated = 0
+        # k = 0
+        # while days_generated < self.num_days:
+        #     z = torch.randn(b, real_data.shape[1], dtype=torch.float64, device=DEVICE).unsqueeze(-1)
+        #     if days_generated == 0:
+        #         c = condition
+        #     else:
+        #         c = x_adv[k-1]
+        #     fake_data = self.generator(c, z)
+        #     x_adv.append(fake_data)
+        #     days_generated = days_generated + fake_data.shape[1]
+        #     k = k + 1
 
-        x_adv = torch.concat(x_adv, dim=1)[:, :self.num_days]
-
-
-        # 1. Scale the prices back to original size
-        if self.scale_max is not None and self.scale_min is not None:
-            real_data_scaled = (self.scale_max - self.scale_min) * ((real_data + 1)/2) + self.scale_min
-            x_adv_scaled = (self.scale_max - self.scale_min) * ((x_adv + 1)/2) + self.scale_min
-            real_pred_scaled = (self.scale_max - self.scale_min) * ((real_pred + 1)/2) + self.scale_min
-        else:
-            real_data_scaled = real_data
-            x_adv_scaled = x_adv
-            real_data_scaled = real_pred
+        # x_adv = torch.concat(x_adv, dim=1)[:, :self.num_days]
 
 
-        # 2. Run model in white box setting
-        #real_outputs, time_idx = self.call_model(real_data_scaled.squeeze(-1), days)
-        #real_predictions = self.get_predictions(real_outputs, time_idx) # if we just predict once we dont need to scatter_bin and get avg
-
-        days_pattern = torch.arange(0, 5).repeat(1, b).reshape(b, 5)
-        last_day = days[:, -1].unsqueeze(-1)
-        next_day = ((last_day + 1) % 5).int()
-        next_week = (days_pattern + next_day) % 5
-
-        future_days = next_week.repeat(1, self.num_days // 5)
-
-        adv_days = torch.concat([days, future_days], dim=1)[:, :self.num_days]
+        # # 1. Scale the prices back to original size
+        # if self.scale_max is not None and self.scale_min is not None:
+        #     real_data_scaled = (self.scale_max - self.scale_min) * ((real_data + 1)/2) + self.scale_min
+        #     x_adv_scaled = (self.scale_max - self.scale_min) * ((x_adv + 1)/2) + self.scale_min
+        #     real_pred_scaled = (self.scale_max - self.scale_min) * ((real_pred + 1)/2) + self.scale_min
+        # else:
+        #     real_data_scaled = real_data
+        #     x_adv_scaled = x_adv
+        #     real_data_scaled = real_pred
 
 
+        # # 2. Run model in white box setting
+        # #real_outputs, time_idx = self.call_model(real_data_scaled.squeeze(-1), days)
+        # #real_predictions = self.get_predictions(real_outputs, time_idx) # if we just predict once we dont need to scatter_bin and get avg
 
-        fake_outputs, time_idx = self.call_model(torch.abs(x_adv_scaled).squeeze(-1), adv_days)
-        fake_predictions = self.get_predictions(fake_outputs, time_idx)
+        # days_pattern = torch.arange(0, 5).repeat(1, b).reshape(b, 5)
+        # last_day = days[:, -1].unsqueeze(-1)
+        # next_day = ((last_day + 1) % 5).int()
+        # next_week = (days_pattern + next_day) % 5
 
+        # future_days = next_week.repeat(1, self.num_days // 5)
 
-        # 3. Compute the adversarial loss (targeted)
-        # slope = (fake_predictions[:, -1] - fake_predictions[:, 0]) / (self.num_days - self.lookback_length)
-        direction = self.target_direction * -1
-        # adversarial_loss = 10 * slope #-1 * self.c * torch.exp(direction * self.d * slope)
-
-        x = torch.arange(self.num_days - self.lookback_length, dtype=torch.float32).expand(b, self.num_days - self.lookback_length)
-        x_mean = torch.mean(x, dim=1).unsqueeze(-1)
-        y_mean = torch.mean(fake_predictions, dim=1).unsqueeze(-1)
-
-        numerator = ((x - x_mean) * (fake_predictions - y_mean)).sum(dim=1)
-        denom = ((x - x_mean)**2).sum(dim=1)
-
-        slope = numerator / denom
-
-        adversarial_loss = slope #self.c * torch.exp(direction * self.d * slope)
+        # adv_days = torch.concat([days, future_days], dim=1)[:, :self.num_days]
 
 
-        #adversarial_loss = 100 * slope
-        #adversarial_loss = torch.where(slope > 0, slope, -1 * self.c * torch.exp(direction * self.d * slope))
 
-        #adversarial_loss = torch.nn.functional.l1_loss(fake_outputs, real_pred_adjprc)
+        # fake_outputs, time_idx = self.call_model(torch.abs(x_adv_scaled).squeeze(-1), adv_days)
+        # fake_predictions = self.get_predictions(fake_outputs, time_idx)
+
+
+        # # 3. Compute the adversarial loss (targeted)
+        # # slope = (fake_predictions[:, -1] - fake_predictions[:, 0]) / (self.num_days - self.lookback_length)
+        # direction = self.target_direction * -1
+        # # adversarial_loss = 10 * slope #-1 * self.c * torch.exp(direction * self.d * slope)
+
+        # x = torch.arange(self.num_days - self.lookback_length, dtype=torch.float32).expand(b, self.num_days - self.lookback_length)
+        # x_mean = torch.mean(x, dim=1).unsqueeze(-1)
+        # y_mean = torch.mean(fake_predictions, dim=1).unsqueeze(-1)
+
+        # numerator = ((x - x_mean) * (fake_predictions - y_mean)).sum(dim=1)
+        # denom = ((x - x_mean)**2).sum(dim=1)
+
+        # slope = numerator / denom
+
+        # adversarial_loss = self.c * torch.exp(direction * self.d * slope)
+
+
+        # #adversarial_loss = 100 * slope
+        # #adversarial_loss = torch.where(slope > 0, slope, -1 * self.c * torch.exp(direction * self.d * slope))
+
+        # #adversarial_loss = torch.nn.functional.l1_loss(fake_outputs, real_pred_adjprc)
         
-        # Compute the final loss and return
-        adversarial_loss = -100 * torch.mean(self.beta * adversarial_loss)
+        # # Compute the final loss and return
+        # adversarial_loss = torch.mean(self.beta * adversarial_loss)
 
-        norm_loss = torch.mean(torch.norm(condition - x_adv, p=2, dim=[1]))
+        #norm_loss = torch.mean(torch.norm(condition - x_adv, p=2, dim=[1]))
 
-        total_g_loss = norm_loss + adversarial_loss
+        total_g_loss = generator_loss #+ adversarial_loss
         total_g_loss.backward()
         generator_optimizer.step()
-        print(adversarial_loss)
+        #print(adversarial_loss)
 
-        self.step_adv_loss.append(adversarial_loss.detach())
+        #self.step_adv_loss.append(adversarial_loss.detach())
 
         if self.epoch_index < len(self.epoch_betas) and self.current_epoch == self.epoch_betas[self.epoch_index]:
             self.beta = self.beta * self.beta_scale
@@ -698,7 +698,7 @@ class DCGAN_Callback(pl.Callback):
             days.append(d)
 
         starting_point = 2000
-        self.sample_adjprc(model, starting_point)
+        #self.sample_adjprc(model, starting_point)
 
         
         
@@ -741,7 +741,7 @@ class DCGAN_Callback(pl.Callback):
                 x_adv_scaled = x_adv
 
 
-            self.plot([x_adv_scaled[0].numpy()], x_label='Time (days)', y_label='Adjprc', title=f'Sample Fake Adjprc: {model.num_days} Days',
+            self.plot([x_adv_scaled[0].detach().cpu().numpy()], x_label='Time (days)', y_label='Adjprc', title=f'Sample Fake Adjprc: {model.num_days} Days',
                         output_file=f'{model.plot_paths}/Epoch_{model.current_epoch}/example_gan_adjprc.png')
             
         fake_output = torch.log(x_adv_scaled[:, 1:] /x_adv_scaled[:, :-1])
@@ -767,60 +767,60 @@ class DCGAN_Callback(pl.Callback):
 
         
 
-        # 2. Run model in white box setting
-        real_outputs, time_idx = model.call_model(real_data_scaled.squeeze(-1), days)
-        real_predictions = model.get_predictions(real_outputs, time_idx)
-        #real_predictions = self.get_predictions(real_outputs, time_idx) # if we just predict once we dont need to scatter_bin and get avg
+        # # 2. Run model in white box setting
+        # real_outputs, time_idx = model.call_model(real_data_scaled.squeeze(-1), days)
+        # real_predictions = model.get_predictions(real_outputs, time_idx)
+        # #real_predictions = self.get_predictions(real_outputs, time_idx) # if we just predict once we dont need to scatter_bin and get avg
 
-        days_pattern = torch.arange(0, 5).repeat(1, num_to_sample).reshape(num_to_sample, 5)
-        last_day = days[:, -1].unsqueeze(-1)
-        next_day = ((last_day + 1) % 5).int()
-        next_week = (days_pattern + next_day) % 5
+        # days_pattern = torch.arange(0, 5).repeat(1, num_to_sample).reshape(num_to_sample, 5)
+        # last_day = days[:, -1].unsqueeze(-1)
+        # next_day = ((last_day + 1) % 5).int()
+        # next_week = (days_pattern + next_day) % 5
 
-        future_days = next_week.repeat(1, model.num_days // 5)
+        # future_days = next_week.repeat(1, model.num_days // 5)
 
-        adv_days = torch.concat([days, future_days], dim=1)[:, :model.num_days]
-
-
-
-        fake_outputs, time_idx = model.call_model(torch.abs(x_adv_scaled).squeeze(-1), adv_days)
-        fake_predictions = model.get_predictions(fake_outputs, time_idx)
+        # adv_days = torch.concat([days, future_days], dim=1)[:, :model.num_days]
 
 
-        # 3. Compute the adversarial loss (targeted)
-        slope = (fake_predictions[:, -1] - fake_predictions[:, 0]) / (model.num_days - model.lookback_length)
-        direction = model.target_direction * -1
-        adversarial_loss = -1 * model.c * torch.exp(direction * model.d * slope)
-        #adversarial_loss = torch.where(slope > 0, slope, -1 * model.c * torch.exp(direction * model.d * slope))
 
-        # Compute the final loss and return
-        a_loss = torch.mean(model.beta * adversarial_loss)
-
-        x = torch.arange(model.num_days - model.lookback_length, dtype=torch.float32).expand(num_to_sample, model.num_days - model.lookback_length)
-        x_mean = torch.mean(x, dim=1).unsqueeze(-1)
-        y_mean = torch.mean(fake_predictions, dim=1).unsqueeze(-1)
-
-        numerator = ((x - x_mean) * (fake_predictions - y_mean)).sum(dim=1)
-        denom = ((x - x_mean)**2).sum(dim=1)
-
-        slope = numerator / denom
-
-        #adversarial_loss = -1 * self.c * torch.exp(direction * self.d * slope)
-
-        adversarial_loss = slope #self.c * torch.exp(direction * self.d * slope)
+        # fake_outputs, time_idx = model.call_model(torch.abs(x_adv_scaled).squeeze(-1), adv_days)
+        # fake_predictions = model.get_predictions(fake_outputs, time_idx)
 
 
-        #adversarial_loss = 100 * slope
-        #adversarial_loss = torch.where(slope > 0, slope, -1 * self.c * torch.exp(direction * self.d * slope))
+        # # 3. Compute the adversarial loss (targeted)
+        # slope = (fake_predictions[:, -1] - fake_predictions[:, 0]) / (model.num_days - model.lookback_length)
+        # direction = model.target_direction * -1
+        # adversarial_loss =  model.c * torch.exp(direction * model.d * slope)
+        # #adversarial_loss = torch.where(slope > 0, slope, -1 * model.c * torch.exp(direction * model.d * slope))
 
-        #adversarial_loss = torch.nn.functional.l1_loss(fake_outputs, real_pred_adjprc)
+        # # Compute the final loss and return
+        # a_loss = torch.mean(model.beta * adversarial_loss)
+
+        # x = torch.arange(model.num_days - model.lookback_length, dtype=torch.float32).expand(num_to_sample, model.num_days - model.lookback_length)
+        # x_mean = torch.mean(x, dim=1).unsqueeze(-1)
+        # y_mean = torch.mean(fake_predictions, dim=1).unsqueeze(-1)
+
+        # numerator = ((x - x_mean) * (fake_predictions - y_mean)).sum(dim=1)
+        # denom = ((x - x_mean)**2).sum(dim=1)
+
+        # slope = numerator / denom
+
+        # #adversarial_loss = -1 * self.c * torch.exp(direction * self.d * slope)
+
+        # adversarial_loss =  model.c * torch.exp(direction * model.d * slope)
+
+
+        # #adversarial_loss = 100 * slope
+        # #adversarial_loss = torch.where(slope > 0, slope, -1 * self.c * torch.exp(direction * self.d * slope))
+
+        # #adversarial_loss = torch.nn.functional.l1_loss(fake_outputs, real_pred_adjprc)
         
-        # Compute the final loss and return
-        adversarial_loss = -100 * torch.mean(model.beta * adversarial_loss)
+        # # Compute the final loss and return
+        # adversarial_loss = torch.mean(model.beta * adversarial_loss)
 
-        norm_loss = torch.mean(torch.norm(condition - x_adv, p=2, dim=[1]))
+        #norm_loss = torch.mean(torch.norm(condition - x_adv, p=2, dim=[1]))
 
-        f_loss = norm_loss + adversarial_loss
+        f_loss = s_loss #+ adversarial_loss
 
         #f_loss = s_loss - a_loss
         # Compute the final loss and return
@@ -837,7 +837,7 @@ class DCGAN_Callback(pl.Callback):
             file.write(f"Sample skew: {real_skew}, Fake skew: {fake_skew}\n")
             file.write(f"Sample kurtosis: {real_kurtosis}, Fake kurtosis: {fake_kurtosis}\n")
             file.write(f"Similarity Loss {s_loss}\n")
-            file.write(f"Adversarial Loss {a_loss}\n")
+            #file.write(f"Adversarial Loss {a_loss}\n")
             file.write(f"Final Loss {f_loss}\n")
             file.write("=" * 50 + "\n")
         
@@ -847,15 +847,15 @@ class DCGAN_Callback(pl.Callback):
         # first we need to scale the fake data to match that of the log returns
 
 
-        plt.plot(fake_predictions[0].detach().cpu().numpy(), label='Adversarial Pred')
-        plt.plot(real_data_scaled[0][100:].detach().cpu().numpy(), label='Actual')
-        plt.plot(real_predictions[0].detach().cpu().numpy(), label='Real Pred')
-        plt.xlabel('Time (days)')
-        plt.ylabel('Adjprc')
-        plt.legend()
-        plt.title('Adversarial vs Real Adjprc Forecast')
-        plt.savefig(f'{model.plot_paths}/Epoch_{model.current_epoch}/example_adversarial_prediction.png')
-        plt.close()
+        # plt.plot(fake_predictions[0].detach().cpu().numpy(), label='Adversarial Pred')
+        # plt.plot(real_data_scaled[0][100:].detach().cpu().numpy(), label='Actual')
+        # plt.plot(real_predictions[0].detach().cpu().numpy(), label='Real Pred')
+        # plt.xlabel('Time (days)')
+        # plt.ylabel('Adjprc')
+        # plt.legend()
+        # plt.title('Adversarial vs Real Adjprc Forecast')
+        # plt.savefig(f'{model.plot_paths}/Epoch_{model.current_epoch}/example_adversarial_prediction.png')
+        # plt.close()
 
         
 
@@ -869,12 +869,12 @@ class DCGAN_Callback(pl.Callback):
         print(f"Discriminator Fake Loss: {d_loss_fake}")
         print(f"Generator Loss: {g_loss}")
         print(f"W Dist Approx: {w_dist}")
-        print(f"Train Adversarial Loss: {a_loss}")
-        print(f"Train Norm Loss: {norm_loss}")
+        #print(f"Train Adversarial Loss: {a_loss}")
+        print(f"Train s Loss: {s_loss}")
         print('=================================')
 
         model.final_losses.append(f_loss)
-        model.adversarial_losses.append(a_loss)
+        #model.adversarial_losses.append(a_loss)
 
         model.step_adv_loss = []
         model.batch_sizes = []
