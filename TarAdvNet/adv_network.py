@@ -410,7 +410,7 @@ class AdversarialNetwork(pl.LightningModule):
             x_adv_scaled = fake_data
             real_data_scaled = real_pred
 
-        mean_loss = torch.mean(torch.abs(real_data_scaled.mean() - x_adv_scaled.mean()) / (real_data_scaled.mean() + 1e-07))
+        #mean_loss = torch.mean(torch.abs(real_data_scaled.mean() - x_adv_scaled.mean()) / (real_data_scaled.mean() + 1e-07))
 
 
 
@@ -458,8 +458,8 @@ class AdversarialNetwork(pl.LightningModule):
         # Compute the final loss and return
         adversarial_loss = torch.mean(self.beta * adversarial_loss)
 
-        total_g_loss = generator_loss + mean_loss + adversarial_loss
-        
+        total_g_loss = generator_loss  + adversarial_loss
+        total_g_loss.backward()
         generator_optimizer.step()
 
         self.step_adv_loss.append(adversarial_loss.detach())
