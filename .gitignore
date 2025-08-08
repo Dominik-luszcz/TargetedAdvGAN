@@ -13,3 +13,6 @@ mapping_gan.pt
 AdversarialDiscriminatorOutputs/*
 Forecast_outputs2/*
 GAN_A_adjprc/*
+*.json
+*.pt
+*.pptx

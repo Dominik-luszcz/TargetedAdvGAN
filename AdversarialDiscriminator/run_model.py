@@ -33,7 +33,7 @@ def initialize_directory(path: str) -> None:
 
 
 class StockDataset(Dataset):
-    def __init__(self, stock_folder, split_file):
+    def __init__(self, stock_folder, split_file, attack, sep="_"):
         super().__init__()
 
         split = np.load(split_file, allow_pickle=True)
@@ -47,13 +47,13 @@ class StockDataset(Dataset):
             if entry.suffix == ".csv":
                 df = pd.read_csv(entry)
                 real_adjprc = np.expand_dims(df["adjprc"].to_numpy(), axis=0)
-                fake_adjprc = np.expand_dims(df["slope_up_adjprc"].to_numpy(), axis=0)
-
-                if entry.name.split("_")[0] in train:
+                fake_adjprc = np.expand_dims(df[attack].to_numpy(), axis=0)
+                
+                if entry.name.split(sep)[0] in train:
                     real_train.append(real_adjprc)
                     fake_train.append(fake_adjprc)
 
-                elif entry.name.split("_")[0] in val:
+                elif entry.name.split(sep)[0] in val:
                     real_val.append(real_adjprc)
                     fake_val.append(fake_adjprc)
 
@@ -90,9 +90,9 @@ class StockDataset(Dataset):
         return self.training_set[index]
 
 
-def train_on_one_stocks(data_files, split_file, hidden_dim, batch_size, num_epochs, output_path):
+def train_on_one_stocks(data_files, attack, split_file, hidden_dim, batch_size, num_epochs, output_path, sep="_"):
 
-    dataset = StockDataset(stock_folder=data_files, split_file=split_file)
+    dataset = StockDataset(stock_folder=data_files, split_file=split_file, attack=attack, sep=sep)
 
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)#, num_workers=19)
 
@@ -194,11 +194,14 @@ if __name__ == '__main__':
     t1 = datetime.now()
     print(f"Started job at {t1}")
 
-    output_path = 'slope_up_discrim'
+    output_path = r"C:\Users\annal\TarAdvGAN_v3\TargetedAdvGAN\AdversarialDiscriminatorOutputs\agan_results"
     initialize_directory(output_path) 
 
-    train_on_one_stocks(data_files="Attack_Outputs/first120_slope_bim", split_file='training_split.npy', hidden_dim=16, batch_size=32, #32 for subsample
-          num_epochs=200, output_path=output_path )#load_model_path=r"C:\Users\annal\TarAdvGAN_v3\TargetedAdvGAN\AdvGAN_A_5\mapping_gan.pt")
+    # train_on_one_stocks(data_files="Attack_Outputs/first300_relative_eps_0.02_all", attack="slope_up_adjprc", split_file='training_split.npy', hidden_dim=16, batch_size=32, #32 for subsample
+    #       num_epochs=200, output_path=output_path )#load_model_path=r"C:\Users\annal\TarAdvGAN_v3\TargetedAdvGAN\AdvGAN_A_5\mapping_gan.pt")
+
+    train_on_one_stocks(data_files="AdvGAN_A_v4_2_5_results/sample_recordings", attack="agan_adjprc", split_file='training_split_agan.npy', hidden_dim=16, batch_size=32, #32 for subsample
+        num_epochs=200, output_path=output_path, sep=".csv" )#load_model_path=r"C:\Users\annal\TarAdvGAN_v3\TargetedAdvGAN\AdvGAN_A_5\mapping_gan.pt")
 
     t2 = datetime.now()
     print(f"Finished job at {t2} with job duration {t2 - t1}")
