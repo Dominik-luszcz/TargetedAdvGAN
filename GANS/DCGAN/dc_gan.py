@@ -11,13 +11,22 @@ from torch.utils.data import DataLoader
 import random
 import os
 
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 class DCGAN(pl.LightningModule):
-    def __init__(self, generator_hidden_dim, noise_dim, generator_output_dim, discriminator_hidden_dim,
-                 sample_size,
-                 scale_max = None, scale_min = None, lr=0.0001, plot_paths='.'):
+    def __init__(
+        self,
+        generator_hidden_dim,
+        noise_dim,
+        generator_output_dim,
+        discriminator_hidden_dim,
+        sample_size,
+        scale_max=None,
+        scale_min=None,
+        lr=0.0001,
+        plot_paths=".",
+    ):
         super().__init__()
 
         self.lr = lr
@@ -31,8 +40,12 @@ class DCGAN(pl.LightningModule):
         self.scale_min = scale_min
         self.sample_size = sample_size
 
-        self.generator = Generator(output_dim=generator_output_dim, sample_size=sample_size)
-        self.discriminator = Discriminator(input_dim=1, hidden_dim=discriminator_hidden_dim, output_dim=1)
+        self.generator = Generator(
+            output_dim=generator_output_dim, sample_size=sample_size
+        )
+        self.discriminator = Discriminator(
+            input_dim=1, hidden_dim=discriminator_hidden_dim, output_dim=1
+        )
 
         self.automatic_optimization = False
 
@@ -50,7 +63,6 @@ class DCGAN(pl.LightningModule):
 
         self.save_hyperparameters()
 
-
     def training_step(self, batch):
         # get the optimizers for the generator and discriminator
         generator_optimizer, discriminator_optimizer = self.optimizers()
@@ -60,7 +72,9 @@ class DCGAN(pl.LightningModule):
         real_data = real_data.unsqueeze(-1).to(DEVICE)
         b, seq_len, dim = real_data.shape
         real_data_labels = torch.ones((b, 1), dtype=torch.float64, device=DEVICE) - 0.15
-        fake_data_labels = torch.zeros((b, 1), dtype=torch.float64, device=DEVICE) + 0.15
+        fake_data_labels = (
+            torch.zeros((b, 1), dtype=torch.float64, device=DEVICE) + 0.15
+        )
 
         # Step 1: we need to train the discriminator
         for p in self.discriminator.parameters():
@@ -71,19 +85,25 @@ class DCGAN(pl.LightningModule):
         discriminator_output_real = self.discriminator(real_data)
         # because we classify per ticker/recording we take the average to get size b x 1
         discriminator_output_real = discriminator_output_real.mean(dim=1)
-        discriminator_loss_real = nn.functional.binary_cross_entropy(discriminator_output_real, real_data_labels)
+        discriminator_loss_real = nn.functional.binary_cross_entropy(
+            discriminator_output_real, real_data_labels
+        )
         discriminator_loss_real.backward()
 
         # Next we need to train the discriminator on the fake data
-        z = torch.randn(b, self.noise_dim, dtype=torch.float64, device=DEVICE).unsqueeze(-1)
+        z = torch.randn(
+            b, self.noise_dim, dtype=torch.float64, device=DEVICE
+        ).unsqueeze(-1)
         fake_data = self.generator(z)
         discriminator_output_fake = self.discriminator(fake_data.detach())
         discriminator_output_fake = discriminator_output_fake.mean(dim=1)
-        discriminator_loss_fake = nn.functional.binary_cross_entropy(discriminator_output_fake, fake_data_labels)
+        discriminator_loss_fake = nn.functional.binary_cross_entropy(
+            discriminator_output_fake, fake_data_labels
+        )
         discriminator_loss_fake.backward()
 
-        self.discriminator_losses_real.append( discriminator_loss_real.detach())
-        self.discriminator_losses_fake.append( discriminator_loss_fake.detach())
+        self.discriminator_losses_real.append(discriminator_loss_real.detach())
+        self.discriminator_losses_fake.append(discriminator_loss_fake.detach())
 
         discriminator_optimizer.step()
 
@@ -92,12 +112,16 @@ class DCGAN(pl.LightningModule):
             p.requires_grad = False
 
         generator_optimizer.zero_grad()
-        z = torch.randn(b, self.noise_dim, dtype=torch.float64, device=DEVICE).unsqueeze(-1)
+        z = torch.randn(
+            b, self.noise_dim, dtype=torch.float64, device=DEVICE
+        ).unsqueeze(-1)
         fake_data = self.generator(z)
         discriminator_output_fake = self.discriminator(fake_data)
         discriminator_output_fake = discriminator_output_fake.mean(dim=1)
 
-        generator_loss = nn.functional.binary_cross_entropy(discriminator_output_fake, real_data_labels + 0.15) 
+        generator_loss = nn.functional.binary_cross_entropy(
+            discriminator_output_fake, real_data_labels + 0.15
+        )
 
         generator_loss.backward()
 
@@ -105,7 +129,7 @@ class DCGAN(pl.LightningModule):
         # for param in self.generator.parameters():
         #     if param.grad is not None:
         #         generator_grad += param.grad.abs().sum().item()
-        
+
         # print(generator_grad)
         # fake_data = self.generator(z)
 
@@ -122,28 +146,30 @@ class DCGAN(pl.LightningModule):
         # k_loss = torch.abs(real_kurtosis - fake_kurtosis)
         # k_loss.backward()
 
-
         # Maybe try a sort of stdev loss
 
-        #stdev_loss = fake_stdev / (real_stdev + 1e-06) + real_stdev / (real_stdev + 1e-06)
-        #stdev_loss.backward()
+        # stdev_loss = fake_stdev / (real_stdev + 1e-06) + real_stdev / (real_stdev + 1e-06)
+        # stdev_loss.backward()
         generator_optimizer.step()
 
         self.generator_losses.append(generator_loss.detach())
         self.batch_sizes.append(b)
 
-        #self.log("wass_dist", wass_dist, on_step=False, on_epoch=True, batch_size=b)
-    
+        # self.log("wass_dist", wass_dist, on_step=False, on_epoch=True, batch_size=b)
+
     def forward(self, x):
         return self.generator(x)
 
-    
     def configure_optimizers(self):
-        generator_optimizer = torch.optim.Adam(self.generator.parameters(), lr=1e-03, betas=(0.5, 0.999))
-        discriminator_optimizer = torch.optim.Adam(self.discriminator.parameters(), lr=1e-05, betas=(0.5, 0.999))
+        generator_optimizer = torch.optim.Adam(
+            self.generator.parameters(), lr=1e-03, betas=(0.5, 0.999)
+        )
+        discriminator_optimizer = torch.optim.Adam(
+            self.discriminator.parameters(), lr=1e-05, betas=(0.5, 0.999)
+        )
 
         return generator_optimizer, discriminator_optimizer
-    
+
 
 class DCGAN_Callback(pl.Callback):
     def __init__(self, log_returns):
@@ -157,14 +183,13 @@ class DCGAN_Callback(pl.Callback):
         discriminator_losses_fake = torch.Tensor(model.discriminator_losses_fake)
         batch_sizes = torch.Tensor(model.batch_sizes)
 
-        d_loss_real = sum(discriminator_losses_real *  batch_sizes) / sum(batch_sizes)
-        d_loss_fake = sum(discriminator_losses_fake *  batch_sizes) / sum(batch_sizes)
-        g_loss = sum(generator_losses *  batch_sizes) / sum(batch_sizes)
+        d_loss_real = sum(discriminator_losses_real * batch_sizes) / sum(batch_sizes)
+        d_loss_fake = sum(discriminator_losses_fake * batch_sizes) / sum(batch_sizes)
+        g_loss = sum(generator_losses * batch_sizes) / sum(batch_sizes)
 
         # make epoch dir
-        os.makedirs(f'{model.plot_paths}/Epoch_{model.current_epoch}')
-        os.chmod(f'{model.plot_paths}/Epoch_{model.current_epoch}', 0o700)
-        
+        os.makedirs(f"{model.plot_paths}/Epoch_{model.current_epoch}")
+        os.chmod(f"{model.plot_paths}/Epoch_{model.current_epoch}", 0o700)
 
         # 1. Sample n intervals of 400 days and compute stats like kurtosis and skew
         num_to_sample = 16
@@ -178,10 +203,12 @@ class DCGAN_Callback(pl.Callback):
             interval = self.log_returns[start : start + model.sample_size]
             if i == 0:
                 plt.plot(interval.numpy())
-                plt.xlabel('Time (days)')
-                plt.ylabel('Log Returns')
-                plt.title(f'Example real Return: {model.sample_size} Days ')
-                plt.savefig(f'{model.plot_paths}/Epoch_{model.current_epoch}/example_real_output_epoch{model.current_epoch}.png')
+                plt.xlabel("Time (days)")
+                plt.ylabel("Log Returns")
+                plt.title(f"Example real Return: {model.sample_size} Days ")
+                plt.savefig(
+                    f"{model.plot_paths}/Epoch_{model.current_epoch}/example_real_output_epoch{model.current_epoch}.png"
+                )
                 plt.close()
 
             mean = torch.mean(interval)
@@ -198,24 +225,26 @@ class DCGAN_Callback(pl.Callback):
             real_iqr.append(iqr)
             real_skew.append(skew)
             real_kurtosis.append(kurtosis)
-        
+
         real_means = torch.stack(real_means).mean()
         real_stdevs = torch.stack(real_stdevs).mean()
         real_iqr = torch.stack(real_iqr).mean()
         real_skew = torch.stack(real_skew).mean()
         real_kurtosis = torch.stack(real_kurtosis).mean()
 
-        
-       
         model.eval()
         with torch.no_grad():
-            z = torch.randn(num_to_sample, 50, dtype=torch.float64, device=DEVICE).unsqueeze(-1)
+            z = torch.randn(
+                num_to_sample, 50, dtype=torch.float64, device=DEVICE
+            ).unsqueeze(-1)
             fake_output = model.generator(z)
 
             # Need to scale back to log returns
             if model.scale_max != None and model.scale_min != None:
 
-                fake_output = (model.scale_max - model.scale_min) * ((fake_output + 1)/2) + model.scale_min
+                fake_output = (model.scale_max - model.scale_min) * (
+                    (fake_output + 1) / 2
+                ) + model.scale_min
 
             model.example_outputs.append(fake_output)
 
@@ -227,8 +256,8 @@ class DCGAN_Callback(pl.Callback):
 
         z = (fake_output.squeeze(-1) - mean) / stdev
 
-        skew = torch.mean(z ** 3, dim=1)
-        kurtosis = torch.mean(z ** 4, dim=1)
+        skew = torch.mean(z**3, dim=1)
+        kurtosis = torch.mean(z**4, dim=1)
 
         fake_means = mean.mean()
         fake_stdevs = stdev.mean()
@@ -236,38 +265,47 @@ class DCGAN_Callback(pl.Callback):
         fake_skew = skew.mean()
         fake_kurtosis = kurtosis.mean()
 
-        loss = ((real_means - fake_means) ** 2 + (real_stdevs - fake_stdevs) ** 2 + 
-                (real_skew - fake_skew) ** 2 + (real_kurtosis - fake_kurtosis) ** 2)
+        loss = (
+            (real_means - fake_means) ** 2
+            + (real_stdevs - fake_stdevs) ** 2
+            + (real_skew - fake_skew) ** 2
+            + (real_kurtosis - fake_kurtosis) ** 2
+        )
 
-
-        with open(f"{model.plot_paths}/Epoch_{model.current_epoch}/generated_stats_epoch_{model.current_epoch}.txt", 'a') as file:
+        with open(
+            f"{model.plot_paths}/Epoch_{model.current_epoch}/generated_stats_epoch_{model.current_epoch}.txt",
+            "a",
+        ) as file:
             file.write("=" * 50 + "\n")
             file.write(f"Real Mean: {real_means}, Fake Mean: {fake_means}\n")
             file.write(f"Real Stdev: {real_stdevs}, Fake Stdev: {fake_stdevs}\n")
             file.write(f"Real iqr: {real_iqr}, Fake iqr: {fake_iqr}\n")
             file.write(f"Real skew: {real_skew}, Fake skew: {fake_skew}\n")
-            file.write(f"Real kurtosis: {real_kurtosis}, Fake kurtosis: {fake_kurtosis}\n")
+            file.write(
+                f"Real kurtosis: {real_kurtosis}, Fake kurtosis: {fake_kurtosis}\n"
+            )
             file.write(f"Loss {loss}\n")
             file.write("=" * 50 + "\n")
 
-        model.log('loss', loss)
+        model.log("loss", loss)
         model.train()
         # plot example fake data
         # first we need to scale the fake data to match that of the log returns
         fake_output = fake_output.squeeze(-1).squeeze(0).detach()[0].cpu()
         plt.plot(fake_output.numpy())
-        plt.xlabel('Time (days)')
-        plt.ylabel('Log Returns')
-        plt.title('Example log return created from GAN')
-        plt.savefig(f'{model.plot_paths}/Epoch_{model.current_epoch}/example_gan_output_epoch{model.current_epoch}.png')
+        plt.xlabel("Time (days)")
+        plt.ylabel("Log Returns")
+        plt.title("Example log return created from GAN")
+        plt.savefig(
+            f"{model.plot_paths}/Epoch_{model.current_epoch}/example_gan_output_epoch{model.current_epoch}.png"
+        )
         plt.close()
 
-
-        print('=================================')
+        print("=================================")
         print(f"Discriminator Real Loss: {d_loss_real}")
         print(f"Discriminator Fake Loss: {d_loss_fake}")
         print(f"Generator Loss: {g_loss}")
-        print('=================================')
+        print("=================================")
 
         model.d_loss_fake.append(d_loss_fake)
         model.d_loss_real.append(d_loss_real)

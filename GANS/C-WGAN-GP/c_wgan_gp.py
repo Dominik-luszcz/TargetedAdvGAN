@@ -12,13 +12,26 @@ import random
 import os
 import torch.autograd as autograd
 
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-class DCGAN(pl.LightningModule):
-    def __init__(self, generator_hidden_dim, noise_dim, generator_output_dim, discriminator_hidden_dim,
-                 sample_size, n_critic = 5, lmda = 5, beta1 = 0.0, beta2=0.9,
-                 scale_max = None, scale_min = None, lr=0.0001, plot_paths='.'):
+class C_WGAN_GP(pl.LightningModule):
+    def __init__(
+        self,
+        generator_hidden_dim,
+        noise_dim,
+        generator_output_dim,
+        discriminator_hidden_dim,
+        sample_size,
+        n_critic=5,
+        lmda=5,
+        beta1=0.0,
+        beta2=0.9,
+        scale_max=None,
+        scale_min=None,
+        lr=0.0001,
+        plot_paths=".",
+    ):
         super().__init__()
 
         self.lr = lr
@@ -36,8 +49,12 @@ class DCGAN(pl.LightningModule):
         self.beta1 = beta1
         self.beta2 = beta2
 
-        self.generator = Generator(output_dim=generator_output_dim, sample_size=sample_size)
-        self.discriminator = Discriminator(input_dim=2, hidden_dim=discriminator_hidden_dim, output_dim=1)
+        self.generator = Generator(
+            output_dim=generator_output_dim, sample_size=sample_size
+        )
+        self.discriminator = Discriminator(
+            input_dim=2, hidden_dim=discriminator_hidden_dim, output_dim=1
+        )
 
         self.automatic_optimization = False
 
@@ -55,18 +72,18 @@ class DCGAN(pl.LightningModule):
 
         self.save_hyperparameters()
 
-    def compute_gradient_penalty(self, condition: Tensor, real_data: Tensor, fake_data: Tensor):
+    def compute_gradient_penalty(
+        self, condition: Tensor, real_data: Tensor, fake_data: Tensor
+    ):
 
         # random interpolation factor alpha
         alpha = torch.rand(real_data.shape[0], 1, 1, device=DEVICE)
         alpha = alpha.expand_as(real_data)
 
-
-
         # calculate the gradients from the interpolation output
         with torch.autograd.set_detect_anomaly(True):
             # calculate the interpolation
-            interpolation = alpha * real_data + (1-alpha) * fake_data
+            interpolation = alpha * real_data + (1 - alpha) * fake_data
             interpolation = interpolation.requires_grad_(True)
 
             # feed the interpolation into the discriminator
@@ -77,8 +94,7 @@ class DCGAN(pl.LightningModule):
                 grad_outputs=torch.ones_like(interpolation_output),
                 create_graph=True,
                 retain_graph=True,
-                only_inputs=True
-
+                only_inputs=True,
             )
 
         gradients = grads[0]
@@ -89,11 +105,6 @@ class DCGAN(pl.LightningModule):
         gradient_penalty = ((flattened.norm(2, dim=1) - 1) ** 2).mean() * self.lmda
 
         return gradient_penalty
-
-
-
-
-
 
     def training_step(self, batch):
         # get the optimizers for the generator and discriminator
@@ -113,6 +124,7 @@ class DCGAN(pl.LightningModule):
         discrim_real_loss = 0
         discrim_fake_loss = 0
         w_dist = 0
+        # Train critic more often for the first epoch
         if self.current_epoch == 0:
             n_critic = self.n_critic * 5
         else:
@@ -122,27 +134,35 @@ class DCGAN(pl.LightningModule):
             discriminator_output_real = self.discriminator(condition, real_data)
             # because we classify per ticker/recording we take the average to get size b x 1
             discriminator_output_real = discriminator_output_real.mean()
-            
-            
-    
+
             # Next we need to train the discriminator on the fake data
-            z = torch.randn(b, real_data.shape[1], dtype=torch.float64, device=DEVICE).unsqueeze(-1)
+            z = torch.randn(
+                b, real_data.shape[1], dtype=torch.float64, device=DEVICE
+            ).unsqueeze(-1)
             fake_data = self.generator(condition, z)
-            discriminator_output_fake = self.discriminator(condition, fake_data.detach())
+            discriminator_output_fake = self.discriminator(
+                condition, fake_data.detach()
+            )
             discriminator_output_fake = discriminator_output_fake.mean()
 
             # Now we have to do the gradient penalty
-            gradient_penalty = self.compute_gradient_penalty(condition=condition, real_data=real_data, fake_data=fake_data)
+            gradient_penalty = self.compute_gradient_penalty(
+                condition=condition, real_data=real_data, fake_data=fake_data
+            )
             # compute the loss
             # goal is to maximize E[D(real)] - E[D(fake)], so instead we minimize E[D(fake)] - E[D(real)]
-            discriminator_loss = discriminator_output_fake - discriminator_output_real + gradient_penalty
+            discriminator_loss = (
+                discriminator_output_fake - discriminator_output_real + gradient_penalty
+            )
             discriminator_loss.backward()
             discriminator_optimizer.step()
 
             discrim_fake_loss += discriminator_output_fake.detach()
             discrim_real_loss += discriminator_output_real.detach()
-            w_dist += (discriminator_output_fake.detach() - discriminator_output_real.detach())
-        
+            w_dist += (
+                discriminator_output_fake.detach() - discriminator_output_real.detach()
+            )
+
         print("Done Critic")
 
         self.discriminator_losses_fake.append(discrim_fake_loss / self.n_critic)
@@ -152,38 +172,41 @@ class DCGAN(pl.LightningModule):
         # Step 2: Train the generator
         for p in self.discriminator.parameters():
             p.requires_grad = False
-            
+
         generator_optimizer.zero_grad()
-        z = torch.randn(b, real_data.shape[1], dtype=torch.float64, device=DEVICE).unsqueeze(-1)
+        z = torch.randn(
+            b, real_data.shape[1], dtype=torch.float64, device=DEVICE
+        ).unsqueeze(-1)
         fake_data = self.generator(condition, z)
         generated_discrim_output = self.discriminator(condition, fake_data)
         generator_loss = -1 * generated_discrim_output.mean()
         generator_loss.backward()
-
 
         generator_optimizer.step()
 
         self.generator_losses.append(generator_loss.detach())
         self.batch_sizes.append(b)
 
-    
     def forward(self, x):
         return self.generator(x)
 
-    
     def configure_optimizers(self):
-        generator_optimizer = torch.optim.Adam(self.generator.parameters(), lr=1e-04, betas=(self.beta1, self.beta2))
-        discriminator_optimizer = torch.optim.Adam(self.discriminator.parameters(), lr=1e-04, betas=(self.beta1, self.beta2))
+        generator_optimizer = torch.optim.Adam(
+            self.generator.parameters(), lr=1e-04, betas=(self.beta1, self.beta2)
+        )
+        discriminator_optimizer = torch.optim.Adam(
+            self.discriminator.parameters(), lr=1e-04, betas=(self.beta1, self.beta2)
+        )
 
         return generator_optimizer, discriminator_optimizer
-    
 
-class DCGAN_Callback(pl.Callback):
+
+class C_WGAN_GP_Callback(pl.Callback):
     def __init__(self, log_returns):
         super().__init__()
         self.log_returns = log_returns
 
-    def on_train_epoch_end(self, trainer: pl.Trainer, model: DCGAN):
+    def on_train_epoch_end(self, trainer: pl.Trainer, model: C_WGAN_GP):
 
         generator_losses = torch.Tensor(model.generator_losses)
         discriminator_losses_real = torch.Tensor(model.discriminator_losses_real)
@@ -191,15 +214,14 @@ class DCGAN_Callback(pl.Callback):
         batch_sizes = torch.Tensor(model.batch_sizes)
         w_dists = torch.Tensor(model.w_dist)
 
-        d_loss_real = sum(discriminator_losses_real *  batch_sizes) / sum(batch_sizes)
-        d_loss_fake = sum(discriminator_losses_fake *  batch_sizes) / sum(batch_sizes)
-        g_loss = sum(generator_losses *  batch_sizes) / sum(batch_sizes)
-        w_dist = sum(w_dists *  batch_sizes) / sum(batch_sizes)
+        d_loss_real = sum(discriminator_losses_real * batch_sizes) / sum(batch_sizes)
+        d_loss_fake = sum(discriminator_losses_fake * batch_sizes) / sum(batch_sizes)
+        g_loss = sum(generator_losses * batch_sizes) / sum(batch_sizes)
+        w_dist = sum(w_dists * batch_sizes) / sum(batch_sizes)
 
         # make epoch dir
-        os.makedirs(f'{model.plot_paths}/Epoch_{model.current_epoch}')
-        os.chmod(f'{model.plot_paths}/Epoch_{model.current_epoch}', 0o700)
-        
+        os.makedirs(f"{model.plot_paths}/Epoch_{model.current_epoch}")
+        os.chmod(f"{model.plot_paths}/Epoch_{model.current_epoch}", 0o700)
 
         # 1. Sample n intervals of 400 days and compute stats like kurtosis and skew
         num_to_sample = 16
@@ -211,16 +233,18 @@ class DCGAN_Callback(pl.Callback):
         conditions = torch.zeros((num_to_sample, 50), device=DEVICE)
         for i in range(num_to_sample):
             start = random.randint(50, len(self.log_returns) - model.sample_size)
-            condition = self.log_returns[start - 50: start]
+            condition = self.log_returns[start - 50 : start]
             condition = condition.to(DEVICE)
             conditions[i] = condition
             interval = self.log_returns[start : start + model.sample_size]
             if i == 0:
                 plt.plot(interval.numpy())
-                plt.xlabel('Time (days)')
-                plt.ylabel('Log Returns')
-                plt.title(f'Example real Return: {model.sample_size} Days ')
-                plt.savefig(f'{model.plot_paths}/Epoch_{model.current_epoch}/example_real_output_epoch{model.current_epoch}.png')
+                plt.xlabel("Time (days)")
+                plt.ylabel("Log Returns")
+                plt.title(f"Example real Return: {model.sample_size} Days ")
+                plt.savefig(
+                    f"{model.plot_paths}/Epoch_{model.current_epoch}/example_real_output_epoch{model.current_epoch}.png"
+                )
                 plt.close()
 
             mean = torch.mean(interval)
@@ -237,7 +261,7 @@ class DCGAN_Callback(pl.Callback):
             real_iqr.append(iqr)
             real_skew.append(skew)
             real_kurtosis.append(kurtosis)
-        
+
         real_means = torch.stack(real_means).mean()
         real_stdevs = torch.stack(real_stdevs).mean()
         real_iqr = torch.stack(real_iqr).mean()
@@ -245,17 +269,20 @@ class DCGAN_Callback(pl.Callback):
         real_kurtosis = torch.stack(real_kurtosis).mean()
 
         conditions = conditions.unsqueeze(-1)
-        
-       
+
         model.eval()
         with torch.no_grad():
-            z = torch.randn(num_to_sample, 50, dtype=torch.float64, device=DEVICE).unsqueeze(-1)
+            z = torch.randn(
+                num_to_sample, 50, dtype=torch.float64, device=DEVICE
+            ).unsqueeze(-1)
             fake_output = model.generator(conditions, z)
 
             # Need to scale back to log returns
             if model.scale_max != None and model.scale_min != None:
 
-                fake_output = (model.scale_max - model.scale_min) * ((fake_output + 1)/2) + model.scale_min
+                fake_output = (model.scale_max - model.scale_min) * (
+                    (fake_output + 1) / 2
+                ) + model.scale_min
 
             model.example_outputs.append(fake_output)
 
@@ -265,8 +292,12 @@ class DCGAN_Callback(pl.Callback):
         q25 = torch.quantile(fake_output, q=0.25, dim=1)
         iqr = q75 - q25
 
-        skew = torch.sum(((fake_output - mean[:, None]) / stdev[:, None]) ** 3, dim=1).mean(dim=1)
-        kurtosis = torch.sum(((fake_output - mean[:, None]) / stdev[:, None]) ** 4, dim=1).mean(dim=1)
+        skew = torch.sum(
+            ((fake_output - mean[:, None]) / stdev[:, None]) ** 3, dim=1
+        ).mean(dim=1)
+        kurtosis = torch.sum(
+            ((fake_output - mean[:, None]) / stdev[:, None]) ** 4, dim=1
+        ).mean(dim=1)
 
         fake_means = mean.mean()
         fake_stdevs = stdev.mean()
@@ -274,39 +305,48 @@ class DCGAN_Callback(pl.Callback):
         fake_skew = skew.mean()
         fake_kurtosis = kurtosis.mean()
 
-        loss = ((real_means - fake_means) ** 2 + (real_stdevs - fake_stdevs) ** 2 + 
-                (real_skew - fake_skew) ** 2 + (real_kurtosis - fake_kurtosis) ** 2)
+        loss = (
+            (real_means - fake_means) ** 2
+            + (real_stdevs - fake_stdevs) ** 2
+            + (real_skew - fake_skew) ** 2
+            + (real_kurtosis - fake_kurtosis) ** 2
+        )
 
-
-        with open(f"{model.plot_paths}/Epoch_{model.current_epoch}/generated_stats_epoch_{model.current_epoch}.txt", 'a') as file:
+        with open(
+            f"{model.plot_paths}/Epoch_{model.current_epoch}/generated_stats_epoch_{model.current_epoch}.txt",
+            "a",
+        ) as file:
             file.write("=" * 50 + "\n")
             file.write(f"Real Mean: {real_means}, Fake Mean: {fake_means}\n")
             file.write(f"Real Stdev: {real_stdevs}, Fake Stdev: {fake_stdevs}\n")
             file.write(f"Real iqr: {real_iqr}, Fake iqr: {fake_iqr}\n")
             file.write(f"Real skew: {real_skew}, Fake skew: {fake_skew}\n")
-            file.write(f"Real kurtosis: {real_kurtosis}, Fake kurtosis: {fake_kurtosis}\n")
+            file.write(
+                f"Real kurtosis: {real_kurtosis}, Fake kurtosis: {fake_kurtosis}\n"
+            )
             file.write(f"Loss {loss}\n")
             file.write("=" * 50 + "\n")
 
-        model.log('loss', loss)
+        model.log("loss", loss)
         model.train()
         # plot example fake data
         # first we need to scale the fake data to match that of the log returns
         fake_output = fake_output.squeeze(-1).squeeze(0).detach()[0].cpu()
         plt.plot(fake_output.numpy())
-        plt.xlabel('Time (days)')
-        plt.ylabel('Log Returns')
-        plt.title('Example log return created from GAN')
-        plt.savefig(f'{model.plot_paths}/Epoch_{model.current_epoch}/example_gan_output_epoch{model.current_epoch}.png')
+        plt.xlabel("Time (days)")
+        plt.ylabel("Log Returns")
+        plt.title("Example log return created from GAN")
+        plt.savefig(
+            f"{model.plot_paths}/Epoch_{model.current_epoch}/example_gan_output_epoch{model.current_epoch}.png"
+        )
         plt.close()
 
-
-        print('=================================')
+        print("=================================")
         print(f"Discriminator Real Loss: {d_loss_real}")
         print(f"Discriminator Fake Loss: {d_loss_fake}")
         print(f"Generator Loss: {g_loss}")
         print(f"W Dist Approx: {w_dist}")
-        print('=================================')
+        print("=================================")
 
         model.d_loss_fake.append(d_loss_fake)
         model.d_loss_real.append(d_loss_real)

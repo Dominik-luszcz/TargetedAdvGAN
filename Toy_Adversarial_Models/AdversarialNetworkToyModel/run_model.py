@@ -3,6 +3,7 @@ import pandas as pd
 import pytorch_lightning as pl
 import torch
 
+# torch.set_num_threads(40)
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from datetime import datetime
@@ -12,8 +13,11 @@ from pathlib import Path
 import random
 from sklearn.metrics.pairwise import rbf_kernel
 from scipy.stats import gaussian_kde
+import pytorch_forecasting as pf
 
-from dc_gan import *
+
+# from path_generation import compute_bond_SDE, compute_stock_SDE
+from adv_network import *
 
 import os
 
@@ -29,70 +33,14 @@ def initialize_directory(path: str) -> None:
         os.mkdir(path)
 
 
-class StockDataset(Dataset):
-    def __init__(
-        self, stock_folder, training_split_file, mode="train", subsample=False
-    ):
-        super().__init__()
-
-        self.training_data = []
-        self.testing_data = []
-        self.validation_data = []
-
-        self.mode = mode
-        self.subsample = subsample
-
-        split = np.load(training_split_file, allow_pickle=True)
-        training_files = split.item()["train"]
-        testing_files = split.item()["test"]
-        val_files = split.item()["val"]
-
-        self.max_return = None
-        self.min_return = None
-
-        for entry in Path(stock_folder).iterdir():
-            if entry.suffix != ".csv":
-                continue
-
-            if entry.name.split(".csv")[0] in training_files:
-                adjprc = pd.read_csv(entry)["adjprc"].to_numpy()
-
-                # do log returns, this way we can easily inverse and get adjprc when we have our second discriminator (need initial price though)
-                log_returns = np.log(adjprc[1:] / adjprc[:-1])
-
-                self.training_data.append(torch.from_numpy(log_returns))
-            elif entry.name.split(".csv")[0] in val_files:
-                adjprc = pd.read_csv(entry)["adjprc"].to_numpy()
-
-                # do log returns, this way we can easily inverse and get adjprc when we have our second discriminator
-                log_returns = np.log(adjprc[1:] / adjprc[:-1])
-
-                self.validation_data.append(torch.from_numpy(log_returns))
-            else:
-                adjprc = pd.read_csv(entry)["adjprc"].to_numpy()
-
-                # do log returns, this way we can easily inverse and get adjprc when we have our second discriminator
-                log_returns = np.log(adjprc[1:] / adjprc[:-1])
-
-                self.testing_data.append(torch.from_numpy(log_returns))
-
-    def __len__(self):
-        if self.mode == "train":
-            return len(self.training_data)
-        elif self.mode == "val":
-            return len(self.validation_data)
-        else:
-            return len(self.testing_data)
-
-    def __getitem__(self, index):
-        # Rather than the whole recording, subsample a random 500 days
-        if self.mode == "train":
-            start = random.randint(0, len(self.training_data[index]) - 500)
-            return self.training_data[index][start : start + 500]
-        elif self.mode == "val":
-            return self.validation_data[index]
-        else:
-            return self.testing_data[index]
+def get_days(recording: pd.DataFrame):
+    recording["date"] = pd.to_datetime(recording["date"])
+    recording["adjprc_day"] = recording["date"].dt.day_of_week
+    days = torch.from_numpy(
+        recording["adjprc_day"].values
+    )  # we do not touch categorical features since it would be obvious
+    days = days.type(torch.int)
+    return days
 
 
 class SingleStockDataset(Dataset):
@@ -105,9 +53,9 @@ class SingleStockDataset(Dataset):
         self.sample_size = sample_size
 
         try:
-            self.training_stock = pd.read_csv(f"{stock_folder}/{ticker}.csv")[
-                "adjprc"
-            ].to_numpy()
+            df = pd.read_csv(f"{stock_folder}/{ticker}.csv")
+            self.training_stock = df["adjprc"].to_numpy()
+            self.days = get_days(df).double()
         except:
             raise ValueError(
                 f"The ticker {ticker} is not in the provided stock folder {stock_folder}"
@@ -116,78 +64,48 @@ class SingleStockDataset(Dataset):
         self.log_returns = torch.from_numpy(
             np.log(self.training_stock[1:] / self.training_stock[:-1])
         )
+        self.training_stock = torch.from_numpy(self.training_stock)
 
         self.unscaled_returns = self.log_returns
+
+        # scale the training data between -1 and 1
+        self.max_return = torch.quantile(self.log_returns, 1)
+        self.min_return = torch.quantile(self.log_returns, 0)
+
+        print(f"Max Return: {self.max_return}")
+        print(f"Min Return: {self.min_return}")
+
+        self.log_returns = (
+            2
+            * (
+                (self.log_returns - self.min_return)
+                / (self.max_return - self.min_return)
+            )
+            - 1
+        )
+
+        self.time_series_metrics = self.get_metrics()
 
     def __len__(self):
         return self.num_samples
 
     def __getitem__(self, index):
-        start = random.randint(0, len(self.log_returns) - self.sample_size)
-        return self.log_returns[start : start + self.sample_size]
+        start = random.randint(1, len(self.log_returns) - self.sample_size)
+        return (
+            self.training_stock[start - 1],
+            self.days[start - 1 : start + self.sample_size],
+            self.log_returns[start : start + self.sample_size],
+        )
 
+    def get_metrics(self):
+        mean = torch.mean(self.unscaled_returns)
+        std = torch.std(self.unscaled_returns)
 
-def train_on_all_stocks(
-    data_files,
-    training_split_file,
-    batch_size,
-    num_epochs,
-    output_path,
-    noise_dim,
-    generator_hidden_dim,
-    generator_output_dim,
-    discriminator_hidden_dim,
-    lr=0.0001,
-):
+        z = (self.unscaled_returns - mean) / std
+        skew = torch.mean(z**3)
+        kurtosis = torch.mean(z**4) - 3
 
-    dataset = StockDataset(
-        data_files, training_split_file=training_split_file, mode="train"
-    )
-
-    dataloader = DataLoader(dataset, batch_size=batch_size)
-
-    model = DCGAN(
-        noise_dim=noise_dim,
-        generator_hidden_dim=generator_hidden_dim,
-        generator_output_dim=generator_output_dim,
-        discriminator_hidden_dim=discriminator_hidden_dim,
-        lr=lr,
-        plot_paths=output_path,
-        scale_max=dataset.max_return,
-        scale_min=dataset.min_return,
-    )
-
-    train_callback = ModelCheckpoint(
-        monitor="loss",
-        mode="min",
-        save_top_k=1,
-        filename=f"best-model",
-        verbose=True,
-        dirpath=output_path,
-    )
-
-    # Init the trainer
-    trainer = pl.Trainer(
-        devices="auto",
-        accelerator="auto",
-        accumulate_grad_batches=1,
-        logger=False,
-        callbacks=[train_callback],
-        num_sanity_val_steps=0,
-        enable_checkpointing=True,
-        max_epochs=num_epochs,
-        enable_progress_bar=True,
-        max_time="00:03:00:00",
-        default_root_dir=output_path,
-    )
-
-    trainer.fit(model, dataloader)
-
-    plot_loss_functions(model, output_path)
-
-    torch.save(model.state_dict(), f"{output_path}/dc_gan_model.pth")
-
-    return
+        return {"mean": mean, "stdev": std, "skew": skew, "kurtosis": kurtosis}
 
 
 def train_on_one_stocks(
@@ -198,11 +116,7 @@ def train_on_one_stocks(
     batch_size,
     num_epochs,
     output_path,
-    noise_dim,
-    generator_hidden_dim,
-    generator_output_dim,
-    discriminator_hidden_dim,
-    lr=0.0001,
+    model,
 ):
 
     dataset = SingleStockDataset(
@@ -212,18 +126,16 @@ def train_on_one_stocks(
         sample_size=sample_size,
     )
 
-    dataloader = DataLoader(dataset, batch_size=batch_size)
+    dataloader = DataLoader(dataset, batch_size=batch_size)  # , num_workers=19)
 
-    model = DCGAN(
-        noise_dim=noise_dim,
-        generator_hidden_dim=generator_hidden_dim,
-        generator_output_dim=generator_output_dim,
-        discriminator_hidden_dim=discriminator_hidden_dim,
-        lr=lr,
-        plot_paths=output_path,
+    model = AdversarialNetwork(
+        sample_size=sample_size,
+        time_series_metrics=dataset.time_series_metrics,
+        model=model,
+        alpha=1,
         scale_max=dataset.max_return,
         scale_min=dataset.min_return,
-        sample_size=sample_size,
+        plot_paths=output_path,
     )
 
     train_callback = ModelCheckpoint(
@@ -241,12 +153,20 @@ def train_on_one_stocks(
         accelerator="auto",
         accumulate_grad_batches=1,
         logger=False,
-        callbacks=[train_callback, DCGAN_Callback(dataset.unscaled_returns)],
+        callbacks=[
+            train_callback,
+            DCGAN_Callback(
+                dataset.unscaled_returns,
+                dataset.days,
+                dataset.training_stock,
+                num_to_sample=32,
+            ),
+        ],
         num_sanity_val_steps=0,
         enable_checkpointing=True,
         max_epochs=num_epochs,  # max_steps=MAX_ITERATIONS,
         enable_progress_bar=True,
-        max_time="00:03:00:00",
+        max_time="00:10:00:00",
         default_root_dir=output_path,
     )
 
@@ -254,40 +174,41 @@ def train_on_one_stocks(
 
     plot_loss_functions(model, output_path)
 
-    torch.save(model.state_dict(), f"{output_path}/dc_gan_model.pth")
+    torch.save(model.state_dict(), f"{output_path}/adv_model.pth")
+
+    # model.load_state_dict(torch.load('vGan_model.pth'))
+    # test_datset = StockDataset(data_files, training_split_file=training_split_file, mode='test')
+
+    # best_model_path = trainer.checkpoint_callback.best_model_path
+    # print(best_model_path)
+    # best_model = VanillaGAN.load_from_checkpoint(best_model_path)
+    # torch.save(best_model.state_dict(), f"dc_gan.pt")
+
+    # inference_test(model, noise_dim)
 
     return
 
 
-def plot_loss_functions(model: DCGAN, output_path):
-    # plot loss
-    plt.plot(model.d_loss_real, color="blue", label="Discriminator Loss (Real)")
-    plt.plot(model.d_loss_fake, color="orange", label="Discriminator Loss (Fake)")
-    plt.plot(model.g_loss, color="red", label="Generator Loss")
+def plot_loss_functions(model: AdversarialNetwork, output_path):
+    # plot example fake data
+    plt.plot(model.adversarial_losses, color="blue", label="Adversarial Loss")
+    plt.plot(model.similarity_losses, color="orange", label="Similarity Loss")
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
-    plt.title("Loss Curve for D and G")
+    plt.title("Loss Curve for Adversarial and Similarity")
     plt.legend()
-    plt.savefig(f"{output_path}/loss_curve.png")
+    plt.savefig(f"{output_path}/component_loss_curve.png")
+    plt.close()
+
+    plt.plot(model.final_losses, color="blue", label="Final Losses")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Final Loss Curve")
+    plt.legend()
+    plt.savefig(f"{output_path}/final_loss_curve.png")
     plt.close()
 
 
-def inference_test(model: DCGAN, noise_dim):
-
-    with torch.no_grad():
-        z = torch.randn(1, noise_dim, dtype=torch.float64).unsqueeze(-1)
-        fake_data = model.generator(z)
-
-    # plot example fake data
-    plt.plot(fake_data.squeeze(-1).squeeze(0).detach().numpy())
-    plt.xlabel("Time (days)")
-    plt.ylabel("Log Returns")
-    plt.title("Example log return created from GAN")
-    plt.savefig("./example_gan_output.png")
-    plt.close()
-
-
-# Compute MMD
 def maximum_mean_discrepency(X, Y, gamma=1):
 
     xx = rbf_kernel(X, X, gamma)
@@ -297,11 +218,8 @@ def maximum_mean_discrepency(X, Y, gamma=1):
     return xx.mean() + yy.mean() - 2 * xy.mean()
 
 
-def sample_stats(model: DCGAN, log_returns, num_to_sample, output_dir):
-    """
-    Randomly sample num_to_sample intervals from the real data and the synthetic
-    and calculate metrics.
-    """
+def sample_stats(model: AdversarialNetwork, log_returns, num_to_sample, output_dir):
+
     # 1. Sample n intervals of 400 days and compute stats like kurtosis and skew
     real_means = []
     real_stdevs = []
@@ -380,7 +298,7 @@ def sample_stats(model: DCGAN, log_returns, num_to_sample, output_dir):
     fake_output = fake_output.squeeze(-1).detach().cpu().numpy()
     mmd = maximum_mean_discrepency(real_samples, fake_output, gamma=1)
 
-    with open(f"{output_dir}/sample_stats.txt", "a") as file:
+    with open(f"{output_dir}/sample_stats_wgan2.txt", "a") as file:
         file.write("=" * 50 + "\n")
         file.write(f"Real Mean: {real_means}, Fake Mean: {fake_means}\n")
         file.write(f"Real Stdev: {real_stdevs}, Fake Stdev: {fake_stdevs}\n")
@@ -402,12 +320,13 @@ def sample_stats(model: DCGAN, log_returns, num_to_sample, output_dir):
 
     real_pdf = real_kde(grid)
     fake_pdf = fake_kde(grid)
+    # fig, ax = plt.subplots(1, 2, figsize=(12, 5))
     plt.plot(grid, real_pdf, label="Real", color="red")
     plt.plot(grid, fake_pdf, label="Synthetic", color="blue")
     plt.legend()
     plt.xlabel("Log_return")
     plt.ylabel("Density")
-    plt.savefig(f"{output_dir}/dcgan_kde.png")
+    plt.savefig(f"{output_dir}/wgan_kde2.png")
     plt.close()
 
     plt.hist(real_samples.flatten(), label="Real", color="red", alpha=0.6, bins=100)
@@ -417,7 +336,7 @@ def sample_stats(model: DCGAN, log_returns, num_to_sample, output_dir):
     plt.legend()
     plt.xlabel("Log_return")
     plt.ylabel("Density")
-    plt.savefig(f"{output_dir}/dcgan_hist.png")
+    plt.savefig(f"{output_dir}/wgan_hist2.png")
     plt.close()
 
     fig, ax = plt.subplots(1, 2, figsize=(10, 5))
@@ -431,7 +350,7 @@ def sample_stats(model: DCGAN, log_returns, num_to_sample, output_dir):
     ax[1].plot(ro)
     ax[1].set_xlabel("Time (days)")
     ax[1].set_title("Example Real Log Return")
-    plt.savefig(f"{output_dir}/example_dcgan_return.png")
+    plt.savefig(f"{output_dir}/example_wgan_return.png")
     plt.close()
 
 
@@ -439,21 +358,40 @@ if __name__ == "__main__":
     t1 = datetime.now()
     print(f"Started job at {t1}")
 
-    output_path = "DCGAN_A"
+    # model = DCGAN.load_from_checkpoint(r"C:\Users\annal\WGan_A_50_simpler\best-model.ckpt")
+    # dataset = SingleStockDataset(stock_folder="SP500_Filtered", ticker='A', num_samples=500, sample_size=50)
+
+    # sample_stats(model, log_returns=dataset.unscaled_returns, num_to_sample=2000, output_dir='.')
+
+    # output_path = '/scratch/a/alim/dominik/WGan_A_250epochs'
+    # output_path = '/scratch/a/alim/dominik/WGan_A_50_simpler'
+    # output_path = '/scratch/a/alim/dominik/WGan_A_50_simpler_350'
+    # initialize_directory(output_path)
+
+    # train_on_one_stocks(data_files="/home/a/alim/dominik/SP500_Filtered", ticker='A', num_samples=384, sample_size=350, batch_size=32, #32 for subsample
+    #       num_epochs=250, output_path=output_path, noise_dim=32,
+    #       generator_hidden_dim=64, generator_output_dim=1, discriminator_hidden_dim=64)
+
+    output_path = "./AdvGAN_A"
     initialize_directory(output_path)
 
+    model_state_dict = torch.load("NHITS_forecasting_model.pt")
+    params = torch.load("./NHITS_params.pt", weights_only=False)
+    params["loss"] = pf.QuantileLoss(
+        quantiles=[0.001, 0.01, 0.05, 0.5, 0.95, 0.99, 0.999]
+    )
+    model = pf.NHiTS(**params)
+    model.load_state_dict(model_state_dict)
+
     train_on_one_stocks(
-        data_files="/SP500_Filtered",
+        data_files="SP500_Filtered",
         ticker="A",
         num_samples=384,
-        sample_size=350,
+        sample_size=119,
         batch_size=32,  # 32 for subsample
-        num_epochs=250,
+        num_epochs=500,
         output_path=output_path,
-        noise_dim=8,
-        generator_hidden_dim=64,
-        generator_output_dim=1,
-        discriminator_hidden_dim=64,
+        model=model,
     )
 
     t2 = datetime.now()
