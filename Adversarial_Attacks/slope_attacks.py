@@ -117,21 +117,13 @@ def perform_adversarial_attack(data_path, mode=0, output_path="."):
     total_attack_error = 0
     k = 0
 
-    # output_path = "Attack_Outputs"
     initialize_directory(output_path)
 
     mae_experiment = []
-    # initialize_directory(f"{output_path}/StealthyBIM")
-    # initialize_directory(f"{output_path}/MIFGSM")
-    # initialize_directory(f"{output_path}/BIM")
-    # initialize_directory(f"{output_path}/FGSM")
-    # initialize_directory(f"{output_path}/TarBIM_up")
-    # initialize_directory(f"{output_path}/TarBIM_down")
-    # initialize_directory(f"{output_path}/CW")
 
     i = 0
 
-    # For each recording we perform the adversarial attack
+    # For each recording we perform the slope attacks
     for entry in Path(data_path).iterdir():
         if i > 5:
             break
@@ -292,20 +284,14 @@ def perform_adversarial_attack(data_path, mode=0, output_path="."):
 
 
 def plot_dataframes(data_path, output_dir):
-    # initialize_directory(f"{output_dir}/AttackAdjprc")
-    # initialize_directory(f"{output_dir}/AttackPredictions")
+
     initialize_directory(f"{output_dir}/Slope_Attacks")
     initialize_directory(f"{output_dir}/Slope_Adjprc")
-    # initialize_directory(f"{output_dir}/CW_Slope_Attacks")
-    # initialize_directory(f"{output_dir}/CW_Slope_Adjprc")
 
     for entry in Path(data_path).iterdir():
         if entry.suffix == ".csv":
             df = pd.read_csv(entry)
             ticker = entry.name.split("_attackdf")[0]
-            # plot(df, title=f"Adjprc for different attacks on {ticker}", to_plot=["adjprc", "fgsm_adprc", "bim_adprc", "mi_fgsm_adprc",
-            #                   "stealthy_adprc","tar_U_bim_adprc","tar_D_bim_adprc", "cw_adprc", "slope_up_adjprc", "slope_down_adjprc", "slope_0_adjprc"],
-            #                   output_file=f"{output_dir}/AttackAdjprc/{ticker}.png")
 
             plot(
                 df,
@@ -335,10 +321,6 @@ def plot_dataframes(data_path, output_dir):
             #                   output_file=f"{output_dir}/CW_Slope_Adjprc/{ticker}.png", labels=['Adjprc', 'CW Slope (Up)', 'CW Slope (Down)', 'CW Slope (0)', 'CW LS Slope (Up)', 'CW LS Slope (Down)', 'CW LS Slope (0)'])
 
             df = df[100:]
-            # plot(df, title=f"Predictions for different attacks on {ticker}", to_plot=["normal_pred","fgsm_pred","bim_pred","mi_fgsm_pred","stealthy_pred","tar_U_bim_pred",
-            #                   "tar_D_bim_pred","cw_pred", "slope_up_pred", "slope_down_pred", "slope_0_pred"],
-            #                   output_file=f"{output_dir}/AttackPredictions/{ticker}.png")
-
             plot(
                 df,
                 title=f"Predictions for slope attacks on {ticker}",
@@ -363,23 +345,14 @@ def plot_dataframes(data_path, output_dir):
                 ],
             )
 
-            # plot(df, title=f"Predictions for slope attacks on {ticker}", to_plot=["normal_pred", "cw_slope_up_pred", "cw_slope_down_pred", "cw_slope_0_pred", "cw_ls_slope_up_pred", "cw_ls_slope_down_pred", "cw_ls_slope_0_pred"],
-            #         output_file=f"{output_dir}/CW_Slope_Attacks/{ticker}.png", labels=['Normal Pred', 'CW Slope (Up)', 'CW Slope (Down)', 'CW Slope (0)', 'CW LS Slope (Up)', 'CW LS Slope (Down)', 'CW LS Slope (0)'])
-
 
 if __name__ == "__main__":
     t1 = datetime.now()
     print(f"Started job at {t1}")
 
-    # perform_adversarial_attack("SP500_AttackData_Full", mode=0, output_path='Attack_Outputs/full_recording')
     perform_adversarial_attack(
         "SP500_Filtered", mode=1, output_path="Attack_Outputs/first120_slope_bim_eps5"
     )
-    # perform_adversarial_attack("SP500_AttackData_Full", mode=2, output_path='Attack_Outputs/final500')
-
-    # plot_dataframes('Attack_Outputs/full_recording', 'Attack_Outputs/full_recording')
-    # plot_dataframes('Attack_Outputs/first500', 'Attack_Outputs/first500')
-    # plot_dataframes('Attack_Outputs/final500', 'Attack_Outputs/final500')
 
     plot_dataframes(
         "Attack_Outputs/first120_slope_bim_eps5",
