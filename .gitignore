@@ -16,3 +16,4 @@ GAN_A_adjprc/*
 *.json
 *.pt
 *.pptx
+*Forecast_outputs*/*
