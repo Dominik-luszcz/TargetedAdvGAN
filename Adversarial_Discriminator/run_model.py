@@ -23,11 +23,6 @@ from sklearn.metrics import (
     recall_score,
 )
 from scipy.stats import gaussian_kde
-
-# import pytorch_forecasting as pf
-
-
-# from path_generation import compute_bond_SDE, compute_stock_SDE
 from adversarialDiscriminator import *
 
 import os
@@ -126,9 +121,7 @@ def train_on_one_stocks(
         stock_folder=data_files, split_file=split_file, attack=attack, sep=sep
     )
 
-    dataloader = DataLoader(
-        dataset, batch_size=batch_size, shuffle=True
-    )  # , num_workers=19)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     model = AdversarialDiscriminator(hidden_dim=hidden_dim)
 
@@ -163,11 +156,6 @@ def train_on_one_stocks(
 
     trainer.fit(model, dataloader)
 
-    # torch.save(model.state_dict(), f"{output_path}/adv_model_last_epoch.pth")
-
-    # model.load_state_dict(torch.load('vGan_model.pth'))
-    # test_datset = StockDataset(data_files, training_split_file=training_split_file, mode='test')
-
     best_model_path = trainer.checkpoint_callback.best_model_path
     print(best_model_path)
     best_model = AdversarialDiscriminator.load_from_checkpoint(best_model_path)
@@ -183,8 +171,6 @@ def train_on_one_stocks(
     plt.close()
 
     test(model, dataset.test_set, output_path)
-
-    # inference_test(model, noise_dim)
 
     return
 
@@ -260,19 +246,16 @@ if __name__ == "__main__":
     output_path = r"C:\Users\annal\TarAdvGAN_v3\TargetedAdvGAN\AdversarialDiscriminatorOutputs\agan_results"
     initialize_directory(output_path)
 
-    # train_on_one_stocks(data_files="Attack_Outputs/first300_relative_eps_0.02_all", attack="slope_up_adjprc", split_file='training_split.npy', hidden_dim=16, batch_size=32, #32 for subsample
-    #       num_epochs=200, output_path=output_path )#load_model_path=r"C:\Users\annal\TarAdvGAN_v3\TargetedAdvGAN\AdvGAN_A_5\mapping_gan.pt")
-
     train_on_one_stocks(
         data_files="AdvGAN_A_v4_2_5_results/sample_recordings",
         attack="agan_adjprc",
         split_file="training_split_agan.npy",
         hidden_dim=16,
-        batch_size=32,  # 32 for subsample
+        batch_size=32,
         num_epochs=200,
         output_path=output_path,
         sep=".csv",
-    )  # load_model_path=r"C:\Users\annal\TarAdvGAN_v3\TargetedAdvGAN\AdvGAN_A_5\mapping_gan.pt")
+    )
 
     t2 = datetime.now()
     print(f"Finished job at {t2} with job duration {t2 - t1}")

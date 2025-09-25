@@ -76,7 +76,6 @@ class StockDataset(Dataset):
 
                 self.testing_data.append(torch.from_numpy(log_returns))
 
-
     def __len__(self):
         if self.mode == "train":
             return len(self.training_data)
@@ -257,7 +256,6 @@ def train_on_one_stocks(
 
     torch.save(model.state_dict(), f"{output_path}/dc_gan_model.pth")
 
-
     return
 
 
@@ -288,6 +286,7 @@ def inference_test(model: DCGAN, noise_dim):
     plt.savefig("./example_gan_output.png")
     plt.close()
 
+
 # Compute MMD
 def maximum_mean_discrepency(X, Y, gamma=1):
 
@@ -299,10 +298,10 @@ def maximum_mean_discrepency(X, Y, gamma=1):
 
 
 def sample_stats(model: DCGAN, log_returns, num_to_sample, output_dir):
-    '''
+    """
     Randomly sample num_to_sample intervals from the real data and the synthetic
     and calculate metrics.
-    '''
+    """
     # 1. Sample n intervals of 400 days and compute stats like kurtosis and skew
     real_means = []
     real_stdevs = []
@@ -440,13 +439,22 @@ if __name__ == "__main__":
     t1 = datetime.now()
     print(f"Started job at {t1}")
 
-
-    output_path = 'DCGAN_A'
+    output_path = "DCGAN_A"
     initialize_directory(output_path)
 
-    train_on_one_stocks(data_files="/SP500_Filtered", ticker='A', num_samples=384, sample_size=350, batch_size=32, #32 for subsample
-          num_epochs=250, output_path=output_path, noise_dim=8,
-          generator_hidden_dim=64, generator_output_dim=1, discriminator_hidden_dim=64)
+    train_on_one_stocks(
+        data_files="/SP500_Filtered",
+        ticker="A",
+        num_samples=384,
+        sample_size=350,
+        batch_size=32,  # 32 for subsample
+        num_epochs=250,
+        output_path=output_path,
+        noise_dim=8,
+        generator_hidden_dim=64,
+        generator_output_dim=1,
+        discriminator_hidden_dim=64,
+    )
 
     t2 = datetime.now()
     print(f"Finished job at {t2} with job duration {t2 - t1}")

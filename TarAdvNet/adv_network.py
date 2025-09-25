@@ -108,12 +108,10 @@ class AdversarialNetwork(pl.LightningModule):
             for param in self.model.parameters():
                 param.requires_grad = False
 
-        """
-    Compute the ema based on the pandas formula in their documentation (when adjust=False)
-    """
-
     def exponential_moving_average(self, adjprc: torch.Tensor, span: int):
-
+        """
+        Compute the ema based on the pandas formula in their documentation (when adjust=False)
+        """
         alpha = 2.0 / (span + 1.0)
 
         ema = torch.zeros_like(adjprc)
@@ -126,7 +124,9 @@ class AdversarialNetwork(pl.LightningModule):
         return ema
 
     def feature_generation(self, adjprc: torch.Tensor):
-
+        """
+        Perform the feature generation for the NHITS model given the adjprc
+        """
         adjprc = adjprc.float()
         weight5 = torch.ones((1, 1, 5)) / 5
         weight10 = torch.ones((1, 1, 10)) / 10
@@ -242,14 +242,6 @@ class AdversarialNetwork(pl.LightningModule):
 
         features = (features - avg.unsqueeze(1)) / stdev.unsqueeze(1)
 
-        # median = torch.median(adjprc, dim=0).values
-        # q75 = torch.quantile(adjprc, q=0.75, dim=0)
-        # q25 = torch.quantile(adjprc, q=0.25, dim=0)
-        # #adjprc = (adjprc - median) / (q75 - q25)
-
-        # scale_ = q75 - q25
-        # center_ = median
-
         center_ = torch.median(adjprc, dim=1).values
         scale_ = (
             torch.quantile(adjprc, q=0.75, dim=1)
@@ -285,32 +277,10 @@ class AdversarialNetwork(pl.LightningModule):
         # 8. decoder_target -> if list, with each entry for a different target. float tensor with unscaled continous target or encoded categorical target for decoder - this corresponds to first entry of y, list of tensors for multiple targets
         # 9. target_scale -> if list, with each entry for a different target. parameters used to normalize the target. Typically these are mean and standard deviation. Is list of tensors for multiple targets.
 
-        # encoder_batches = []
-        # encoder_categorical_batches = []
-        # decoder_batches = []
-        # decoder_categorical_batches = []
-        # time_idx = []
-        # encoder_targets = []
-        # decoder_targets = []
-
-        # for i in range(0, features.shape[1] - 300 - 49): # need to make room for prediction values
-        #     encoder_batches.append(features[:, i:i+300, :])
-        #     encoder_categorical_batches.append(days[:, i:i+300])
-        #     encoder_targets.append(x_prime[:, i:i+300])
-
-        #     decoder_batches.append(features[:, i+300:i+300+50, :])
-        #     decoder_categorical_batches.append(days[:, i+300 : i+300+50])
-        #     decoder_targets.append(x_prime[:, i+300:i+350])
-        #     time_idx.append(torch.arange(i+300, i+350))
-
         time_idx = torch.arange(100, 120)
         encoder_batches = features[:, 0:100, :].float()
         encoder_categorical_batches = days[:, 0:100].unsqueeze(-1).int()
         encoder_targets = x_prime[:, 0:100]
-
-        # decoder_batches = features[:, 100:120, :]
-        # decoder_categorical_batches = days[:, 100 : 120].unsqueeze(-1).int()
-        # decoder_targets = x_prime[:, 100:120]
 
         # will need to batch this further
         payload = {
@@ -530,21 +500,6 @@ class AdversarialNetwork(pl.LightningModule):
             x_adv_scaled = fake_data
             real_data_scaled = real_pred
 
-        # mean_loss = torch.mean(torch.abs(real_data_scaled.mean() - x_adv_scaled.mean()) / (real_data_scaled.mean() + 1e-07))
-
-        # Now we have to get an adversarial loss
-        # z = torch.randn(b, real_data.shape[1], dtype=torch.float64, device=DEVICE).unsqueeze(-1)
-        # fake_data = self.generator(condition, z)
-        # # 1. convert the log returns into adjprc
-        # if self.scale_max is not None and self.scale_min is not None:
-        #     real_data_scaled = (self.scale_max - self.scale_min) * ((real_data + 1)/2) + self.scale_min
-        #     x_adv_scaled = (self.scale_max - self.scale_min) * ((fake_data + 1)/2) + self.scale_min
-        #     real_pred_scaled = (self.scale_max - self.scale_min) * ((real_pred + 1)/2) + self.scale_min
-        # else:
-        #     real_data_scaled = real_data
-        #     x_adv_scaled = fake_data
-        #     real_data_scaled = real_pred
-
         adv_adjprc = torch.concat(
             [
                 initial_price.unsqueeze(-1),
@@ -573,11 +528,8 @@ class AdversarialNetwork(pl.LightningModule):
         # fake_predictions = self.get_predictions(fake_outputs, time_idx)
 
         # 3. Compute the adversarial loss (targeted)
-        # slope = (fake_outputs[:, -1] - fake_outputs[:, 0]) / 20
         direction = self.target_direction * -1
-        # adversarial_loss = torch.mean(-1 * self.c * torch.exp(direction * self.d * slope))
 
-        # adversarial_loss = torch.nn.functional.l1_loss(fake_outputs, real_pred_adjprc)
         x = torch.arange(
             self.num_days - self.lookback_length, dtype=torch.float32
         ).expand(b, self.num_days - self.lookback_length)
@@ -922,19 +874,11 @@ class DCGAN_Callback(pl.Callback):
 
         # 2. Run model in white box setting
         real_outputs, time_idx = model.call_model(real_adjprc, days)
-        # real_predictions = self.get_predictions(real_outputs, time_idx) # if we just predict once we dont need to scatter_bin and get avg
 
         fake_outputs, _ = model.call_model(adv_adjprc, days)
-        # fake_predictions = self.get_predictions(fake_outputs, time_idx)
 
         # 3. Compute the adversarial loss
-        # slope = (fake_outputs[:, -1] - fake_outputs[:, 0]) / 20
         direction = model.target_direction * -1
-        # adversarial_loss = torch.mean(-1 * model.c * torch.exp(direction * model.d * slope))
-        # #a_loss = torch.nn.functional.l1_loss(fake_outputs, real_pred_adjprc)
-
-        # # Compute the final loss and return
-        # a_loss = torch.mean(model.beta * adversarial_loss)
 
         x = torch.arange(
             model.num_days - model.lookback_length, dtype=torch.float32
@@ -951,8 +895,6 @@ class DCGAN_Callback(pl.Callback):
         a_loss = torch.mean(model.beta * adversarial_loss)
 
         f_loss = s_loss + a_loss
-        # Compute the final loss and return
-        # f_loss = s_loss + a_loss
 
         with open(
             f"{model.plot_paths}/Epoch_{model.current_epoch}/generated_stats_epoch_{model.current_epoch}.txt",

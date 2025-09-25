@@ -204,12 +204,11 @@ def maximum_mean_discrepency(X, Y, gamma=1):
     return xx.mean() + yy.mean() - 2 * xy.mean()
 
 
-
 def sample_stats(model: C_WGAN_GP_RNN, log_returns, num_to_sample, output_dir):
-    '''
+    """
     Randomly sample num_to_sample intervals from the real data and the synthetic
     and calculate metrics.
-    '''
+    """
     # 1. Sample n intervals of 400 days and compute stats like kurtosis and skew
     real_means = []
     real_stdevs = []
@@ -365,7 +364,6 @@ if __name__ == "__main__":
         generator_output_dim=1,
         discriminator_hidden_dim=64,
     )
-
 
     t2 = datetime.now()
     print(f"Finished job at {t2} with job duration {t2 - t1}")

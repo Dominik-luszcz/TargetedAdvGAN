@@ -45,9 +45,7 @@ class Generator(nn.Module):
     def forward(self, noise):
         noise = torch.permute(noise, (0, 2, 1))
         output = self.generator(noise)
-        output = output[
-            :, :, : self.sample_size
-        ]
+        output = output[:, :, : self.sample_size]
         return torch.permute(output, (0, 2, 1))
 
 
@@ -99,7 +97,6 @@ class Discriminator(nn.Module):
             ),
             nn.Sigmoid(),
         )
-
 
         self.double()
 

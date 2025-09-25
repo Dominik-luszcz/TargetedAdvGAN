@@ -40,7 +40,7 @@ class Generator(nn.Module):
                 dilation=8,
                 padding=(5 - 1) * 8,
             ),
-            nn.Tanh()
+            nn.Tanh(),
         )
 
         self.output = nn.Linear(64, 1)

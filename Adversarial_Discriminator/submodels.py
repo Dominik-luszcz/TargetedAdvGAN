@@ -51,14 +51,6 @@ class Discriminator(nn.Module):
             ),
         )
 
-        # self.tcn1 = TCN_Block(input_dim=input_dim, output_dim=self.hidden_dim, kernel_size=3, dilation=1, padding=(3-1) * 1)
-        # self.gru1 = nn.GRU(input_size=self.hidden_dim, hidden_size=self.hidden_dim*2, num_layers=1, batch_first=True)
-        # self.leaky = nn.LeakyReLU()
-        # self.tcn2 = TCN_Block(input_dim=self.hidden_dim*2, output_dim=self.hidden_dim*2, kernel_size=5, dilation=2, padding=(5-1) * 2)
-        # self.gru2 = nn.GRU(input_size=self.hidden_dim*2, hidden_size=self.hidden_dim, num_layers=1, batch_first=True)
-        # self.tcn3 = TCN_Block(input_dim=self.hidden_dim, output_dim=self.hidden_dim, kernel_size=5, dilation=4, padding=(5-1) * 4)
-        # self.output = nn.Linear(self.hidden_dim, output_dim)
-
         self.double()
 
     def forward(self, data):
@@ -69,20 +61,6 @@ class Discriminator(nn.Module):
         x = self.discriminator(x)
         x = torch.permute(x, (0, 2, 1))
         return x.mean(dim=1)
-        # x = self.tcn1(x)
-        # x = torch.permute(x, (0, 2, 1))
-        # with torch.backends.cudnn.flags(enabled=False):
-        #     x, _ = self.gru1(x)
-        # x = torch.permute(x, (0, 2, 1))
-        # x = self.tcn2(x)
-        # x = torch.permute(x, (0, 2, 1))
-        # with torch.backends.cudnn.flags(enabled=False):
-        #     x, _ = self.gru2(x)
-        # x = torch.permute(x, (0, 2, 1))
-        # self.tcn3(x)
-        # x = torch.permute(x, (0, 2, 1))
-        # x = x.mean(dim=1)
-        # return self.output(x)
 
 
 class TCN_Block(nn.Module):

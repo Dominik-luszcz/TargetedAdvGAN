@@ -629,38 +629,11 @@ if __name__ == "__main__":
     t1 = datetime.now()
     print(f"Started job at {t1}")
 
-    # model = DCGAN.load_from_checkpoint(r"C:\Users\annal\WGan_A_50_simpler\best-model.ckpt")
-    # dataset = SingleStockDataset(stock_folder="SP500_Filtered", ticker='A', num_samples=500, sample_size=50)
-
-    # sample_stats(model, log_returns=dataset.unscaled_returns, num_to_sample=2000, output_dir='.')
-
-    # output_path = '/scratch/a/alim/dominik/WGan_A_250epochs'
-    # output_path = '/scratch/a/alim/dominik/WGan_A_50_simpler'
-    # output_path = '/scratch/a/alim/dominik/WGan_A_50_simpler_350'
-    # initialize_directory(output_path)
-
-    # train_on_one_stocks(data_files="/home/a/alim/dominik/SP500_Filtered", ticker='A', num_samples=384, sample_size=350, batch_size=32, #32 for subsample
-    #       num_epochs=250, output_path=output_path, noise_dim=32,
-    #       generator_hidden_dim=64, generator_output_dim=1, discriminator_hidden_dim=64)
-
-    # output_path = '/scratch/a/alim/dominik/AdvGAN_A'
-    # initialize_directory(output_path)
-
-    # model_state_dict = torch.load("NHITS_forecasting_model.pt")
-    # params = torch.load("./NHITS_params.pt", weights_only=False)
-    # params["loss"] = pf.QuantileLoss(quantiles=[0.001, 0.01, 0.05, 0.5, 0.95, 0.99, 0.999])
-    # model = pf.NHiTS(**params)
-    # model.load_state_dict(model_state_dict)
-    # model.eval()
-
-    # train_on_one_stocks(data_files="/home/a/alim/dominik/SP500_Filtered", ticker='A', num_samples=384, sample_size=99, batch_size=32, #32 for subsample
-    #       num_epochs=500, output_path=output_path, model=model)
-
-    output_path = "./AdvGAN_A_v4_2_5_results"
-    # initialize_directory(output_path)
+    output_path = "./AdvGAN"
+    initialize_directory(output_path)
 
     model_state_dict = torch.load("NHITS_forecasting_model.pt")
-    params = torch.load("./NHITS_params.pt", weights_only=False)
+    params = torch.load("NHITS_model/NHITS_params.pt", weights_only=False)
     params["loss"] = pf.QuantileLoss(
         quantiles=[0.001, 0.01, 0.05, 0.5, 0.95, 0.99, 0.999]
     )
@@ -672,8 +645,6 @@ if __name__ == "__main__":
         stock_folder="SP500_Filtered", ticker="A", num_samples=512, sample_size=99
     )
 
-    # dataloader = DataLoader(dataset, batch_size=batch_size)#, num_workers=19)
-
     adv_net = AdversarialNetwork(
         sample_size=99,
         model=model,
@@ -682,22 +653,18 @@ if __name__ == "__main__":
         scale_min=dataset.min_return,
         plot_paths=output_path,
     )
-    load_model_path = (
-        r"C:\Users\annal\TarAdvGAN_v3\TargetedAdvGAN\AdvGAN_A_v4_2_5\best-model.ckpt"
-    )
 
-    best_model = AdversarialNetwork.load_from_checkpoint(
-        load_model_path,
-        strict=False,
-        model=model,
+    train_on_one_stocks(
+        data_files="SP500_Filtered",
+        ticker="A",
+        num_samples=512,
         sample_size=99,
-        scale_max=dataset.max_return,
-        scale_min=dataset.min_return,
+        batch_size=32,
+        num_epochs=50,
+        output_path=output_path,
+        nhits_model=model,
+        load_model_path="AdvGan_Results/AdvGAN_A_v4_2_5/best-model.ckpt",
     )
-    sample_stats(best_model, dataset, num_to_sample=2000, output_dir=output_path)
-
-    # train_on_one_stocks(data_files="SP500_Filtered", ticker='A', num_samples=512, sample_size=99, batch_size=32, #32 for subsample
-    #       num_epochs=50, output_path=output_path, nhits_model=model, load_model_path=r"C:\Users\annal\TarAdvGAN_v3\TargetedAdvGAN\AdvGAN_A_v4_2_5\best-model.ckpt")
 
     t2 = datetime.now()
     print(f"Finished job at {t2} with job duration {t2 - t1}")

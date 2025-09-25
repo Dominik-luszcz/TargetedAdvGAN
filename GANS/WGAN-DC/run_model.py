@@ -332,13 +332,22 @@ if __name__ == "__main__":
     t1 = datetime.now()
     print(f"Started job at {t1}")
 
-
-    output_path = './WGan_A'
+    output_path = "./WGan_A"
     initialize_directory(output_path)
 
-    train_on_one_stocks(data_files="SP500_Filtered", ticker='A', num_samples=384, sample_size=350, batch_size=32,
-          num_epochs=250, output_path=output_path, noise_dim=32,
-          generator_hidden_dim=64, generator_output_dim=1, discriminator_hidden_dim=64)
+    train_on_one_stocks(
+        data_files="SP500_Filtered",
+        ticker="A",
+        num_samples=384,
+        sample_size=350,
+        batch_size=32,
+        num_epochs=250,
+        output_path=output_path,
+        noise_dim=32,
+        generator_hidden_dim=64,
+        generator_output_dim=1,
+        discriminator_hidden_dim=64,
+    )
 
     t2 = datetime.now()
     print(f"Finished job at {t2} with job duration {t2 - t1}")
