@@ -2,7 +2,8 @@ import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import torch
-#torch.set_num_threads(40)
+
+# torch.set_num_threads(40)
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from datetime import datetime
@@ -12,14 +13,17 @@ from pathlib import Path
 import random
 from sklearn.metrics.pairwise import rbf_kernel
 from scipy.stats import gaussian_kde
-#import pytorch_forecasting as pf
+
+# import pytorch_forecasting as pf
 
 
-#from path_generation import compute_bond_SDE, compute_stock_SDE
+# from path_generation import compute_bond_SDE, compute_stock_SDE
 from adv_network import *
 
 import os
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
 
 def initialize_directory(path: str) -> None:
     """Create the output folder at path if it does not exist, or empty it if it exists."""
@@ -29,18 +33,22 @@ def initialize_directory(path: str) -> None:
     else:
         os.mkdir(path)
 
+
 def get_days(recording: pd.DataFrame):
-        recording["date"] = pd.to_datetime(recording["date"])
-        recording["adjprc_day"] = recording["date"].dt.day_of_week
-        days = torch.from_numpy(recording["adjprc_day"].values) # we do not touch categorical features since it would be obvious
-        days = days.type(torch.int)
-        return days
+    recording["date"] = pd.to_datetime(recording["date"])
+    recording["adjprc_day"] = recording["date"].dt.day_of_week
+    days = torch.from_numpy(
+        recording["adjprc_day"].values
+    )  # we do not touch categorical features since it would be obvious
+    days = days.type(torch.int)
+    return days
 
 
 class SingleStockDataset(Dataset):
-    def __init__(self, stock_folder, ticker, num_samples, sample_size, forecast_length = 20):
+    def __init__(
+        self, stock_folder, ticker, num_samples, sample_size, forecast_length=20
+    ):
         super().__init__()
- 
 
         self.max_return = None
         self.min_return = None
@@ -50,96 +58,157 @@ class SingleStockDataset(Dataset):
 
         try:
             df = pd.read_csv(f"{stock_folder}/{ticker}.csv")
-            self.training_stock = df['adjprc'].to_numpy()
+            self.training_stock = df["adjprc"].to_numpy()
             self.days = get_days(df).double()
         except:
-            raise ValueError(f"The ticker {ticker} is not in the provided stock folder {stock_folder}")
+            raise ValueError(
+                f"The ticker {ticker} is not in the provided stock folder {stock_folder}"
+            )
 
         self.training_stock = torch.from_numpy(self.training_stock)
 
-
-
-        #scale the training data between -1 and 1
+        # scale the training data between -1 and 1
         self.max_return = torch.quantile(self.training_stock, 1)
         self.min_return = torch.quantile(self.training_stock, 0)
 
         print(f"Max Return: {self.max_return}")
         print(f"Min Return: {self.min_return}")
 
-        self.scaled_adjprc = 2 * ((self.training_stock - self.min_return) / (self.max_return - self.min_return)) - 1
+        self.scaled_adjprc = (
+            2
+            * (
+                (self.training_stock - self.min_return)
+                / (self.max_return - self.min_return)
+            )
+            - 1
+        )
 
-        #self.time_series_metrics = self.get_metrics()
-            
+        # self.time_series_metrics = self.get_metrics()
+
     def __len__(self):
         return self.num_samples
-    
+
     def __getitem__(self, index):
-        start = random.randint(0, len(self.scaled_adjprc) - self.sample_size - self.forecast_length)
+        start = random.randint(
+            0, len(self.scaled_adjprc) - self.sample_size - self.forecast_length
+        )
         # return : (days, lookback_prc, forecast_prc)
-        return self.days[start: start + self.sample_size], self.scaled_adjprc[start: start + self.sample_size], self.scaled_adjprc[start + self.sample_size: start + self.sample_size + self.forecast_length]
+        return (
+            self.days[start : start + self.sample_size],
+            self.scaled_adjprc[start : start + self.sample_size],
+            self.scaled_adjprc[
+                start
+                + self.sample_size : start
+                + self.sample_size
+                + self.forecast_length
+            ],
+        )
 
     def get_metrics(self):
         mean = torch.mean(self.unscaled_returns)
         std = torch.std(self.unscaled_returns)
 
         z = (self.unscaled_returns - mean) / std
-        skew = torch.mean(z ** 3)
-        kurtosis = torch.mean(z ** 4) - 3
+        skew = torch.mean(z**3)
+        kurtosis = torch.mean(z**4) - 3
 
-        return {
-            'mean': mean,
-            'stdev': std,
-            'skew': skew,
-            'kurtosis': kurtosis
-        }
+        return {"mean": mean, "stdev": std, "skew": skew, "kurtosis": kurtosis}
 
 
-def train_on_one_stocks(data_files, ticker, num_samples, sample_size, forecast_length, batch_size, num_epochs, output_path, nhits_model, load_model_path = None, test = False):
+def train_on_one_stocks(
+    data_files,
+    ticker,
+    num_samples,
+    sample_size,
+    forecast_length,
+    batch_size,
+    num_epochs,
+    output_path,
+    nhits_model,
+    load_model_path=None,
+    test=False,
+):
 
-    dataset = SingleStockDataset(stock_folder=data_files, ticker=ticker, num_samples=num_samples, sample_size=sample_size, forecast_length=forecast_length)
+    dataset = SingleStockDataset(
+        stock_folder=data_files,
+        ticker=ticker,
+        num_samples=num_samples,
+        sample_size=sample_size,
+        forecast_length=forecast_length,
+    )
 
-    dataloader = DataLoader(dataset, batch_size=batch_size)#, num_workers=19)
+    dataloader = DataLoader(dataset, batch_size=batch_size)  # , num_workers=19)
 
-    model = AdversarialNetwork(sample_size=sample_size, num_days=sample_size,
-                               model = nhits_model, alpha=1, scale_max=dataset.max_return, scale_min=dataset.min_return,
-                               plot_paths=output_path)
-    
+    model = AdversarialNetwork(
+        sample_size=sample_size,
+        num_days=sample_size,
+        model=nhits_model,
+        alpha=1,
+        scale_max=dataset.max_return,
+        scale_min=dataset.min_return,
+        plot_paths=output_path,
+    )
+
     if load_model_path != None:
         model.load_state_dict(torch.load(load_model_path, map_location=DEVICE))
 
     if test:
-        on_train_epoch_end(model, forecast_length, dataset.scaled_adjprc, dataset.training_stock, dataset.days)
+        on_train_epoch_end(
+            model,
+            forecast_length,
+            dataset.scaled_adjprc,
+            dataset.training_stock,
+            dataset.days,
+        )
         return
-    
+
     train_callback = ModelCheckpoint(
-            monitor="loss",
-            mode="min",
-            save_top_k=1,
-            filename=f"best-model",
-            verbose=True,
-            dirpath=output_path
+        monitor="loss",
+        mode="min",
+        save_top_k=1,
+        filename=f"best-model",
+        verbose=True,
+        dirpath=output_path,
     )
 
     model.epoch_betas = [60]
-    model.beta = 0#.01 #e-01
+    model.beta = 0  # .01 #e-01
     model.beta_scale = 10
     model.alpha = 1
     model.c = 5
     model.d = 2
     # Init the trainer
-    trainer = pl.Trainer(devices='auto', accelerator='auto', accumulate_grad_batches=1, logger=False, callbacks=[train_callback, DCGAN_Callback(dataset.training_stock, dataset.scaled_adjprc, dataset.days, num_to_sample=64, forecast_length=20)], 
-                         num_sanity_val_steps=0, enable_checkpointing=True, max_epochs=num_epochs,#max_steps=MAX_ITERATIONS,
-                        enable_progress_bar=True, max_time='00:20:00:00', default_root_dir=output_path)
-    
+    trainer = pl.Trainer(
+        devices="auto",
+        accelerator="auto",
+        accumulate_grad_batches=1,
+        logger=False,
+        callbacks=[
+            train_callback,
+            DCGAN_Callback(
+                dataset.training_stock,
+                dataset.scaled_adjprc,
+                dataset.days,
+                num_to_sample=64,
+                forecast_length=20,
+            ),
+        ],
+        num_sanity_val_steps=0,
+        enable_checkpointing=True,
+        max_epochs=num_epochs,  # max_steps=MAX_ITERATIONS,
+        enable_progress_bar=True,
+        max_time="00:20:00:00",
+        default_root_dir=output_path,
+    )
+
     trainer.fit(model, dataloader)
 
-    #torch.save(model.state_dict(), f"{output_path}/adv_model.pth")
+    # torch.save(model.state_dict(), f"{output_path}/adv_model.pth")
 
     plot_loss_functions(model, output_path)
 
-
-    #model.load_state_dict(torch.load('vGan_model.pth'))
-    #test_datset = StockDataset(data_files, training_split_file=training_split_file, mode='test')
+    # model.load_state_dict(torch.load('vGan_model.pth'))
+    # test_datset = StockDataset(data_files, training_split_file=training_split_file, mode='test')
 
     best_model_path = trainer.checkpoint_callback.best_model_path
     print(best_model_path)
@@ -148,37 +217,37 @@ def train_on_one_stocks(data_files, ticker, num_samples, sample_size, forecast_l
     torch.save(best_model.generator.state_dict(), f"{output_path}/generator.pt")
     torch.save(best_model.discriminator.state_dict(), f"{output_path}/discriminator.pt")
 
-    #test_gan(model, noise_dim)
+    # inference_test(model, noise_dim)
 
     return
 
+
 def plot_loss_functions(model: AdversarialNetwork, output_path):
-        # plot example fake data
-    plt.plot(model.d_loss_real, color='blue', label='Discriminator Loss (Real)')
-    plt.plot(model.d_loss_fake, color='orange', label='Discriminator Loss (Fake)')
-    plt.plot(model.g_loss, color='red', label='Generator Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title('Loss Curve for D and G')
+    # plot example fake data
+    plt.plot(model.d_loss_real, color="blue", label="Discriminator Loss (Real)")
+    plt.plot(model.d_loss_fake, color="orange", label="Discriminator Loss (Fake)")
+    plt.plot(model.g_loss, color="red", label="Generator Loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Loss Curve for D and G")
     plt.legend()
-    plt.savefig(f'{output_path}/g_d_loss_curve.png')
+    plt.savefig(f"{output_path}/g_d_loss_curve.png")
     plt.close()
 
-
-    plt.plot(model.final_w_dists, color='blue', label='W Dist Approximations')
-    plt.xlabel('Epoch')
-    plt.ylabel('W Dist')
-    plt.title('W Dist Approximations')
+    plt.plot(model.final_w_dists, color="blue", label="W Dist Approximations")
+    plt.xlabel("Epoch")
+    plt.ylabel("W Dist")
+    plt.title("W Dist Approximations")
     plt.legend()
-    plt.savefig(f'{output_path}/w_dist.png')
+    plt.savefig(f"{output_path}/w_dist.png")
     plt.close()
 
-    plt.plot(model.g_pens, color='blue', label='Gradient Penalties')
-    plt.xlabel('Epoch')
-    plt.ylabel('Gradient Penalty Magnitude')
-    plt.title('Gradient Penalty over time')
+    plt.plot(model.g_pens, color="blue", label="Gradient Penalties")
+    plt.xlabel("Epoch")
+    plt.ylabel("Gradient Penalty Magnitude")
+    plt.title("Gradient Penalty over time")
     plt.legend()
-    plt.savefig(f'{output_path}/g_pen.png')
+    plt.savefig(f"{output_path}/g_pen.png")
     plt.close()
 
     # # plot example fake data
@@ -197,8 +266,6 @@ def plot_loss_functions(model: AdversarialNetwork, output_path):
     # plt.legend()
     # plt.savefig(f'{output_path}/final_loss_curve.png')
     # plt.close()
-   
-
 
 
 def maximum_mean_discrepency(X, Y, gamma=1):
@@ -212,143 +279,159 @@ def maximum_mean_discrepency(X, Y, gamma=1):
 
 def sample_stats(model: AdversarialNetwork, log_returns, num_to_sample, output_dir):
 
-        # 1. Sample n intervals of 400 days and compute stats like kurtosis and skew
-        real_means = []
-        real_stdevs = []
-        real_iqr = []
-        real_skew = []
-        real_kurtosis = []
-        real_samples = []
-        for i in range(num_to_sample):
-            start = random.randint(0, len(log_returns) - model.sample_size)
-            interval = log_returns[start : start + model.sample_size]
-            real_samples.append(interval.unsqueeze(0).detach().cpu().numpy())
+    # 1. Sample n intervals of 400 days and compute stats like kurtosis and skew
+    real_means = []
+    real_stdevs = []
+    real_iqr = []
+    real_skew = []
+    real_kurtosis = []
+    real_samples = []
+    for i in range(num_to_sample):
+        start = random.randint(0, len(log_returns) - model.sample_size)
+        interval = log_returns[start : start + model.sample_size]
+        real_samples.append(interval.unsqueeze(0).detach().cpu().numpy())
 
-            mean = torch.mean(interval)
-            stdev = torch.std(interval)
-            q75 = torch.quantile(interval, q=0.75)
-            q25 = torch.quantile(interval, q=0.25)
-            iqr = q75 - q25
-
-            skew = torch.sum(((interval - mean) / stdev) ** 3) / model.sample_size
-            kurtosis = torch.sum(((interval - mean) / stdev) ** 4) / model.sample_size
-
-            real_means.append(mean)
-            real_stdevs.append(stdev)
-            real_iqr.append(iqr)
-            real_skew.append(skew)
-            real_kurtosis.append(kurtosis)
-        
-        real_means = torch.stack(real_means).mean()
-        real_stdevs = torch.stack(real_stdevs).mean()
-        real_iqr = torch.stack(real_iqr).mean()
-        real_skew = torch.stack(real_skew).mean()
-        real_kurtosis = torch.stack(real_kurtosis).mean()
-
-        
-       
-        model.eval()
-        with torch.no_grad():
-            z = torch.randn(num_to_sample, 50, dtype=torch.float64, device=DEVICE).unsqueeze(-1)
-            fake_output = model.generator(z)
-
-            # Need to scale back to log returns
-            if model.scale_max != None and model.scale_min != None:
-
-                fake_output = (model.scale_max - model.scale_min) * ((fake_output + 1)/2) + model.scale_min
-
-            model.example_outputs.append(fake_output)
-
-        mean = torch.mean(fake_output, dim=1)
-        stdev = torch.std(fake_output, dim=1)
-        q75 = torch.quantile(fake_output, q=0.75, dim=1)
-        q25 = torch.quantile(fake_output, q=0.25, dim=1)
+        mean = torch.mean(interval)
+        stdev = torch.std(interval)
+        q75 = torch.quantile(interval, q=0.75)
+        q25 = torch.quantile(interval, q=0.25)
         iqr = q75 - q25
 
-        z = (fake_output.squeeze(-1) - mean) / stdev
+        skew = torch.sum(((interval - mean) / stdev) ** 3) / model.sample_size
+        kurtosis = torch.sum(((interval - mean) / stdev) ** 4) / model.sample_size
 
-        skew = torch.mean(z ** 3, dim=1)
-        kurtosis = torch.mean(z ** 4, dim=1)
+        real_means.append(mean)
+        real_stdevs.append(stdev)
+        real_iqr.append(iqr)
+        real_skew.append(skew)
+        real_kurtosis.append(kurtosis)
 
-        fake_means = mean.mean()
-        fake_stdevs = stdev.mean()
-        fake_iqr = iqr.mean()
-        fake_skew = skew.mean()
-        fake_kurtosis = kurtosis.mean()
+    real_means = torch.stack(real_means).mean()
+    real_stdevs = torch.stack(real_stdevs).mean()
+    real_iqr = torch.stack(real_iqr).mean()
+    real_skew = torch.stack(real_skew).mean()
+    real_kurtosis = torch.stack(real_kurtosis).mean()
 
-        loss = ((real_means - fake_means) ** 2 + (real_stdevs - fake_stdevs) ** 2 + 
-                (real_skew - fake_skew) ** 2 + (real_kurtosis - fake_kurtosis) ** 2)
+    model.eval()
+    with torch.no_grad():
+        z = torch.randn(
+            num_to_sample, 50, dtype=torch.float64, device=DEVICE
+        ).unsqueeze(-1)
+        fake_output = model.generator(z)
 
-        real_samples = np.concat(real_samples)
-        np.save("real_samples.npy", real_samples)
-        fake_output = fake_output.squeeze(-1).detach().cpu().numpy()
-        mmd = maximum_mean_discrepency(real_samples, fake_output, gamma=1)
+        # Need to scale back to log returns
+        if model.scale_max != None and model.scale_min != None:
 
-        with open(f"{output_dir}/sample_stats_wgan2.txt", 'a') as file:
-            file.write("=" * 50 + "\n")
-            file.write(f"Real Mean: {real_means}, Fake Mean: {fake_means}\n")
-            file.write(f"Real Stdev: {real_stdevs}, Fake Stdev: {fake_stdevs}\n")
-            file.write(f"Real iqr: {real_iqr}, Fake iqr: {fake_iqr}\n")
-            file.write(f"Real skew: {real_skew}, Fake skew: {fake_skew}\n")
-            file.write(f"Real kurtosis: {real_kurtosis}, Fake kurtosis: {fake_kurtosis}\n")
-            file.write(f"Loss: {loss}\n")
-            file.write(f"MMD: {mmd}\n")
-            file.write("=" * 50 + "\n")
+            fake_output = (model.scale_max - model.scale_min) * (
+                (fake_output + 1) / 2
+            ) + model.scale_min
 
-        real_kde = gaussian_kde(real_samples.flatten())
-        fake_kde = gaussian_kde(fake_output.flatten())
+        model.example_outputs.append(fake_output)
 
-        grid = np.linspace(min(real_samples.min(), fake_output.min()), max(real_samples.max(), fake_output.max()), 1000)
+    mean = torch.mean(fake_output, dim=1)
+    stdev = torch.std(fake_output, dim=1)
+    q75 = torch.quantile(fake_output, q=0.75, dim=1)
+    q25 = torch.quantile(fake_output, q=0.25, dim=1)
+    iqr = q75 - q25
 
-        real_pdf = real_kde(grid)
-        fake_pdf = fake_kde(grid)
-        #fig, ax = plt.subplots(1, 2, figsize=(12, 5))
-        plt.plot(grid, real_pdf, label='Real', color="red")
-        plt.plot(grid, fake_pdf, label='Synthetic', color="blue")
-        plt.legend()
-        plt.xlabel('Log_return')
-        plt.ylabel('Density')
-        plt.savefig(f'{output_dir}/wgan_kde2.png')
-        plt.close()
-    
-        plt.hist(real_samples.flatten(), label='Real', color="red", alpha=0.6, bins=100)
-        plt.hist(fake_output.flatten(), label='Synthetic', color="blue", alpha=0.6, bins=100)
-        plt.legend()
-        plt.xlabel('Log_return')
-        plt.ylabel('Density')
-        plt.savefig(f'{output_dir}/wgan_hist2.png')
-        plt.close()
+    z = (fake_output.squeeze(-1) - mean) / stdev
 
-        fig, ax = plt.subplots(1, 2, figsize=(10, 5))
-        fo = fake_output[0]
-        ro = real_samples[0]
-        ax[0].plot(fo)
-        ax[0].set_xlabel('Time (days)')
-        ax[0].set_ylabel('Log Returns')
-        ax[0].set_title('Example GAN Log Return')
+    skew = torch.mean(z**3, dim=1)
+    kurtosis = torch.mean(z**4, dim=1)
 
-        ax[1].plot(ro)
-        ax[1].set_xlabel('Time (days)')
-        ax[1].set_title('Example Real Log Return')
-        plt.savefig(f'{output_dir}/example_wgan_return.png')
-        plt.close()
+    fake_means = mean.mean()
+    fake_stdevs = stdev.mean()
+    fake_iqr = iqr.mean()
+    fake_skew = skew.mean()
+    fake_kurtosis = kurtosis.mean()
+
+    loss = (
+        (real_means - fake_means) ** 2
+        + (real_stdevs - fake_stdevs) ** 2
+        + (real_skew - fake_skew) ** 2
+        + (real_kurtosis - fake_kurtosis) ** 2
+    )
+
+    real_samples = np.concat(real_samples)
+    np.save("real_samples.npy", real_samples)
+    fake_output = fake_output.squeeze(-1).detach().cpu().numpy()
+    mmd = maximum_mean_discrepency(real_samples, fake_output, gamma=1)
+
+    with open(f"{output_dir}/sample_stats_wgan2.txt", "a") as file:
+        file.write("=" * 50 + "\n")
+        file.write(f"Real Mean: {real_means}, Fake Mean: {fake_means}\n")
+        file.write(f"Real Stdev: {real_stdevs}, Fake Stdev: {fake_stdevs}\n")
+        file.write(f"Real iqr: {real_iqr}, Fake iqr: {fake_iqr}\n")
+        file.write(f"Real skew: {real_skew}, Fake skew: {fake_skew}\n")
+        file.write(f"Real kurtosis: {real_kurtosis}, Fake kurtosis: {fake_kurtosis}\n")
+        file.write(f"Loss: {loss}\n")
+        file.write(f"MMD: {mmd}\n")
+        file.write("=" * 50 + "\n")
+
+    real_kde = gaussian_kde(real_samples.flatten())
+    fake_kde = gaussian_kde(fake_output.flatten())
+
+    grid = np.linspace(
+        min(real_samples.min(), fake_output.min()),
+        max(real_samples.max(), fake_output.max()),
+        1000,
+    )
+
+    real_pdf = real_kde(grid)
+    fake_pdf = fake_kde(grid)
+    # fig, ax = plt.subplots(1, 2, figsize=(12, 5))
+    plt.plot(grid, real_pdf, label="Real", color="red")
+    plt.plot(grid, fake_pdf, label="Synthetic", color="blue")
+    plt.legend()
+    plt.xlabel("Log_return")
+    plt.ylabel("Density")
+    plt.savefig(f"{output_dir}/wgan_kde2.png")
+    plt.close()
+
+    plt.hist(real_samples.flatten(), label="Real", color="red", alpha=0.6, bins=100)
+    plt.hist(
+        fake_output.flatten(), label="Synthetic", color="blue", alpha=0.6, bins=100
+    )
+    plt.legend()
+    plt.xlabel("Log_return")
+    plt.ylabel("Density")
+    plt.savefig(f"{output_dir}/wgan_hist2.png")
+    plt.close()
+
+    fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+    fo = fake_output[0]
+    ro = real_samples[0]
+    ax[0].plot(fo)
+    ax[0].set_xlabel("Time (days)")
+    ax[0].set_ylabel("Log Returns")
+    ax[0].set_title("Example GAN Log Return")
+
+    ax[1].plot(ro)
+    ax[1].set_xlabel("Time (days)")
+    ax[1].set_title("Example Real Log Return")
+    plt.savefig(f"{output_dir}/example_wgan_return.png")
+    plt.close()
+
 
 def plot(values: list, x_label, y_label, title, output_file):
-    
+
     for v in values:
         plt.plot(v)
-    plt.xlabel(f'{x_label}')
-    plt.ylabel(f'{y_label}')
-    plt.title(f'{title}')
-    plt.savefig(f'{output_file}')
+    plt.xlabel(f"{x_label}")
+    plt.ylabel(f"{y_label}")
+    plt.title(f"{title}")
+    plt.savefig(f"{output_file}")
     plt.close()
-def on_train_epoch_end(model: AdversarialNetwork, forecast_length, scaled_adjprc, real_adjprc, days):
 
+
+def on_train_epoch_end(
+    model: AdversarialNetwork, forecast_length, scaled_adjprc, real_adjprc, days
+):
 
     # make epoch dir
-    os.makedirs(f'{model.plot_paths}/Final_Plots')
-    os.chmod(f'{model.plot_paths}/Final_Plots', 0o700)
-    
+    os.makedirs(f"{model.plot_paths}/Final_Plots")
+    os.chmod(f"{model.plot_paths}/Final_Plots", 0o700)
+
     avg_adv_slope = 0
     avg_real_slope = 0
     total = 0
@@ -357,48 +440,60 @@ def on_train_epoch_end(model: AdversarialNetwork, forecast_length, scaled_adjprc
     num_to_sample = 128
     intervals = []
     for i in range(0, len(scaled_adjprc) - model.num_days - forecast_length, 20):
-        start = i #random.randint(0, len(scaled_adjprc) - model.num_days - forecast_length)
+        start = i  # random.randint(0, len(scaled_adjprc) - model.num_days - forecast_length)
         interval = real_adjprc[start : start + model.num_days]
-        scaled_interval = scaled_adjprc[start: start + model.num_days]
-        f = real_adjprc[start + model.num_days: start + model.num_days + forecast_length].to(DEVICE)
-        #forecasts[i] = f
-        
-        d = days[start: start + model.num_days]
+        scaled_interval = scaled_adjprc[start : start + model.num_days]
+        f = real_adjprc[
+            start + model.num_days : start + model.num_days + forecast_length
+        ].to(DEVICE)
+        # forecasts[i] = f
+
+        d = days[start : start + model.num_days]
 
         condition = scaled_interval.to(DEVICE)
-        #conditions[i] = condition
+        # conditions[i] = condition
         intervals.append(interval)
 
         real_data = condition.clone()
 
         with torch.no_grad():
-            z = torch.randn(1, real_data.shape[0], dtype=torch.float64, device=DEVICE).unsqueeze(-1)
+            z = torch.randn(
+                1, real_data.shape[0], dtype=torch.float64, device=DEVICE
+            ).unsqueeze(-1)
             x_adv = model.generator(condition.unsqueeze(0).unsqueeze(-1), z)
-             # 1. Scale the prices back to original size
+            # 1. Scale the prices back to original size
             if model.scale_max is not None and model.scale_min is not None:
-                real_data_scaled = (model.scale_max - model.scale_min) * ((real_data + 1)/2) + model.scale_min
-                x_adv_scaled = (model.scale_max - model.scale_min) * ((x_adv + 1)/2) + model.scale_min
+                real_data_scaled = (model.scale_max - model.scale_min) * (
+                    (real_data + 1) / 2
+                ) + model.scale_min
+                x_adv_scaled = (model.scale_max - model.scale_min) * (
+                    (x_adv + 1) / 2
+                ) + model.scale_min
             else:
                 real_data_scaled = real_data
                 x_adv_scaled = x_adv
 
-        os.makedirs(f'{model.plot_paths}/Final_Plots/Start_{start}')
-        os.chmod(f'{model.plot_paths}/Final_Plots/Start_{start}', 0o700)
+        os.makedirs(f"{model.plot_paths}/Final_Plots/Start_{start}")
+        os.chmod(f"{model.plot_paths}/Final_Plots/Start_{start}", 0o700)
 
-        plt.plot(x_adv_scaled.squeeze(-1).squeeze(0).detach().cpu().numpy(), label='X_Adv')
-        plt.plot(interval.detach().cpu().numpy(), label='Real Adjprc')
-        plt.xlabel('Time (days)')
-        plt.ylabel('Adjprc')
+        plt.plot(
+            x_adv_scaled.squeeze(-1).squeeze(0).detach().cpu().numpy(), label="X_Adv"
+        )
+        plt.plot(interval.detach().cpu().numpy(), label="Real Adjprc")
+        plt.xlabel("Time (days)")
+        plt.ylabel("Adjprc")
         plt.legend()
-        plt.title('Adversarial vs Real Adjprc')
-        plt.savefig(f'{model.plot_paths}/Final_Plots/Start_{start}/adjprc_comparison.png')
+        plt.title("Adversarial vs Real Adjprc")
+        plt.savefig(
+            f"{model.plot_paths}/Final_Plots/Start_{start}/adjprc_comparison.png"
+        )
         plt.close()
 
         d = d.unsqueeze(0)
         # 2. Run model in white box setting
         real_outputs, time_idx = model.call_model(real_data_scaled.unsqueeze(0), d)
         real_predictions = model.get_predictions(real_outputs, time_idx)
-        #real_predictions = self.get_predictions(real_outputs, time_idx) # if we just predict once we dont need to scatter_bin and get avg
+        # real_predictions = self.get_predictions(real_outputs, time_idx) # if we just predict once we dont need to scatter_bin and get avg
 
         days_pattern = torch.arange(0, 5).repeat(1, 1).reshape(1, 5)
         last_day = d[:, -1].unsqueeze(-1)
@@ -407,39 +502,41 @@ def on_train_epoch_end(model: AdversarialNetwork, forecast_length, scaled_adjprc
 
         future_days = next_week.repeat(1, model.num_days // 5)
 
-        adv_days = torch.concat([d, future_days], dim=1)[:, :model.num_days]
+        adv_days = torch.concat([d, future_days], dim=1)[:, : model.num_days]
 
-
-
-        fake_outputs, time_idx = model.call_model(torch.abs(x_adv_scaled).squeeze(-1), adv_days)
+        fake_outputs, time_idx = model.call_model(
+            torch.abs(x_adv_scaled).squeeze(-1), adv_days
+        )
         fake_predictions = model.get_predictions(fake_outputs, time_idx)
 
-
         # 3. Compute the adversarial loss (targeted)
-        x = torch.arange(model.num_days - model.lookback_length, dtype=torch.float32).expand(1, model.num_days - model.lookback_length)
+        x = torch.arange(
+            model.num_days - model.lookback_length, dtype=torch.float32
+        ).expand(1, model.num_days - model.lookback_length)
         x_mean = torch.mean(x, dim=1).unsqueeze(-1)
         y_mean = torch.mean(fake_predictions, dim=1).unsqueeze(-1)
 
         numerator = ((x - x_mean) * (fake_predictions - y_mean)).sum(dim=1)
-        denom = ((x - x_mean)**2).sum(dim=1)
+        denom = ((x - x_mean) ** 2).sum(dim=1)
 
         slope = numerator / denom
         avg_adv_slope += slope
 
-        x = torch.arange(model.num_days - model.lookback_length, dtype=torch.float32).expand(1, model.num_days - model.lookback_length)
+        x = torch.arange(
+            model.num_days - model.lookback_length, dtype=torch.float32
+        ).expand(1, model.num_days - model.lookback_length)
         x_mean = torch.mean(x, dim=1).unsqueeze(-1)
         y_mean = torch.mean(real_predictions, dim=1).unsqueeze(-1)
 
         numerator = ((x - x_mean) * (real_predictions - y_mean)).sum(dim=1)
-        denom = ((x - x_mean)**2).sum(dim=1)
+        denom = ((x - x_mean) ** 2).sum(dim=1)
 
         slope_real = numerator / denom
         avg_real_slope += slope_real
         total += 1
 
+        adversarial_loss = slope  # self.c * torch.exp(direction * self.d * slope)
 
-        adversarial_loss = slope #self.c * torch.exp(direction * self.d * slope)
-        
         # Compute the final loss and return
         adversarial_loss = -100 * torch.mean(model.beta * adversarial_loss)
 
@@ -447,38 +544,40 @@ def on_train_epoch_end(model: AdversarialNetwork, forecast_length, scaled_adjprc
 
         f_loss = norm_loss + adversarial_loss
 
-        plt.plot(fake_predictions[0].detach().cpu().numpy(), label='Adversarial Pred')
-        plt.plot(real_data_scaled[100:].detach().cpu().numpy(), label='Actual')
-        plt.plot(real_predictions[0].detach().cpu().numpy(), label='Real Pred')
-        plt.xlabel('Time (days)')
-        plt.ylabel('Adjprc')
+        plt.plot(fake_predictions[0].detach().cpu().numpy(), label="Adversarial Pred")
+        plt.plot(real_data_scaled[100:].detach().cpu().numpy(), label="Actual")
+        plt.plot(real_predictions[0].detach().cpu().numpy(), label="Real Pred")
+        plt.xlabel("Time (days)")
+        plt.ylabel("Adjprc")
         plt.legend()
-        plt.title('Adversarial vs Real Adjprc Forecast')
-        plt.savefig(f'{model.plot_paths}/Final_Plots/Start_{start}/example_adversarial_prediction.png')
+        plt.title("Adversarial vs Real Adjprc Forecast")
+        plt.savefig(
+            f"{model.plot_paths}/Final_Plots/Start_{start}/example_adversarial_prediction.png"
+        )
         plt.close()
 
-        with open(f'{model.plot_paths}/Final_Plots/Start_{start}/generated_stats.txt', 'a') as file:
+        with open(
+            f"{model.plot_paths}/Final_Plots/Start_{start}/generated_stats.txt", "a"
+        ) as file:
             file.write("=" * 50 + "\n")
             file.write(f"Adv Slope: {slope}\n")
             file.write(f"Real Slope: {slope_real}\n")
             file.write(f"2-norm Loss: {norm_loss}\n")
             file.write("=" * 50 + "\n")
-            
-    with open(f'{model.plot_paths}/Final_Plots/avg_stats.txt', 'a') as file:
-            file.write("=" * 50 + "\n")
-            file.write(f"Adv Slope: {avg_adv_slope / total}\n")
-            file.write(f"Real Slope: {avg_real_slope / total}\n")
-            file.write("=" * 50 + "\n")
-            
 
-    
+    with open(f"{model.plot_paths}/Final_Plots/avg_stats.txt", "a") as file:
+        file.write("=" * 50 + "\n")
+        file.write(f"Adv Slope: {avg_adv_slope / total}\n")
+        file.write(f"Real Slope: {avg_real_slope / total}\n")
+        file.write("=" * 50 + "\n")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     t1 = datetime.now()
     print(f"Started job at {t1}")
 
-    output_path = '/scratch/a/alim/dominik/GAN_A_adjprc_s100'
-    initialize_directory(output_path) 
+    output_path = "/scratch/a/alim/dominik/GAN_A_adjprc_s100"
+    initialize_directory(output_path)
 
     # model_state_dict = torch.load("NHITS_forecasting_model.pt")
     # params = torch.load("./NHITS_params.pt", weights_only=False)
@@ -487,10 +586,19 @@ if __name__ == '__main__':
     # model.load_state_dict(model_state_dict)
     # model.eval()
 
+    train_on_one_stocks(
+        data_files="/home/a/alim/dominik/SP500_Filtered",
+        ticker="A",
+        num_samples=512,
+        sample_size=100,
+        batch_size=32,
+        forecast_length=20,  # 32 for subsample
+        num_epochs=500,
+        output_path=output_path,
+        nhits_model=None,
+        load_model_path="/scratch/a/alim/dominik/GAN_A_adjprc_s50/gan.pt",
+    )  # , load_model_path= r'C:\Users\annal\TarAdvGAN_v3\TargetedAdvGAN\AdvGAN_A_prc6_p3_22\adv_model.pth', test=True)#load_model_path=r"C:\Users\annal\TarAdvGAN_v3\TargetedAdvGAN\AdvGAN_A_prc6_p2\adv_model.pth")
 
-    train_on_one_stocks(data_files="/home/a/alim/dominik/SP500_Filtered", ticker='A', num_samples=512, sample_size=100, batch_size=32, forecast_length=20,#32 for subsample
-          num_epochs=500, output_path=output_path, nhits_model=None, load_model_path="/scratch/a/alim/dominik/GAN_A_adjprc_s50/gan.pt")#, load_model_path= r'C:\Users\annal\TarAdvGAN_v3\TargetedAdvGAN\AdvGAN_A_prc6_p3_22\adv_model.pth', test=True)#load_model_path=r"C:\Users\annal\TarAdvGAN_v3\TargetedAdvGAN\AdvGAN_A_prc6_p2\adv_model.pth")
-    
     #  load_model_path= r'C:\Users\annal\TarAdvGAN_v3\TargetedAdvGAN\AdvGAN_A_prc6_p3_22\adv_model.pth', test=True
 
     t2 = datetime.now()

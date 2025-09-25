@@ -6,6 +6,7 @@ import pytorch_forecasting
 from pathlib import Path
 import os
 
+
 def initialize_directory(path: str) -> None:
     """Create the output folder at path if it does not exist, or empty it if it exists."""
     if os.path.exists(path):
@@ -14,9 +15,17 @@ def initialize_directory(path: str) -> None:
     else:
         os.mkdir(path)
 
+
 SAMPLE_LENGTH = 500
 
-def get_attack_data(data_path:str, split_path: str, output_path: str, subsample: bool = False, random: bool = False):
+
+def get_attack_data(
+    data_path: str,
+    split_path: str,
+    output_path: str,
+    subsample: bool = False,
+    random: bool = False,
+):
     print("hi")
 
     test_set = np.load(split_path, allow_pickle=True).item()["test"]
@@ -29,7 +38,7 @@ def get_attack_data(data_path:str, split_path: str, output_path: str, subsample:
             if subsample:
                 if random:
                     random_start = np.random.randint(0, len(df) - SAMPLE_LENGTH)
-                    df = df.loc[random_start:random_start + SAMPLE_LENGTH, :]
+                    df = df.loc[random_start : random_start + SAMPLE_LENGTH, :]
                 else:
                     df = df.tail(SAMPLE_LENGTH)
 
